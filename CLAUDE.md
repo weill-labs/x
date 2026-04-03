@@ -15,6 +15,7 @@ This is a fork of [charmbracelet/x](https://github.com/charmbracelet/x) — a Go
 - `vt/mode.go` — mode definitions and state
 - `vt/key.go` — `SendKey()` for input encoding
 - `vt/screen.go` — screen buffer management (main + alt)
+- `vt/reflow.go` — reflow-on-widen logic for terminal resize
 - `vt/callbacks.go` — callback interface for mode changes, screen updates
 
 **`ansi/` provides escape sequence constants and parsers.** The `ansi/parser/` sub-package implements the VT state machine. Higher-level types like `Mode`, `KittyKeyboard*`, and sequence builders live in `ansi/`.
