@@ -85,3 +85,41 @@ func TestScreenCellShiftsTouchRestOfLine(t *testing.T) {
 		t.Fatalf("expected delete-cell dirty range [2,10), got %#v", got)
 	}
 }
+
+func TestAltScreenReturnInvalidatesMainScreen(t *testing.T) {
+	e := NewEmulator(6, 2)
+	e.scr.ClearTouched()
+
+	want := &uv.Cell{Content: "M", Width: 1}
+	e.SetCell(1, 0, want)
+
+	// Consume the initial main-screen damage so the redraw below depends on the
+	// alt-screen return path invalidating the main screen again.
+	e.Draw(newCountingScreen(6, 2), uv.Rect(0, 0, 6, 2))
+
+	if _, err := e.WriteString("\x1b[?1049h"); err != nil {
+		t.Fatalf("enter alt screen: %v", err)
+	}
+	e.scr.ClearTouched()
+	if _, err := e.WriteString("\x1b[?1049l"); err != nil {
+		t.Fatalf("leave alt screen: %v", err)
+	}
+
+	dst := newCountingScreen(6, 2)
+	e.Draw(dst, uv.Rect(0, 0, 6, 2))
+
+	if len(dst.fillAreas) != 2 {
+		t.Fatalf("expected full redraw of both lines, got %d fill areas", len(dst.fillAreas))
+	}
+	if got := dst.fillAreas[0]; got != uv.Rect(0, 0, 6, 1) {
+		t.Fatalf("expected first line fill %v, got %v", uv.Rect(0, 0, 6, 1), got)
+	}
+	if got := dst.fillAreas[1]; got != uv.Rect(0, 1, 6, 1) {
+		t.Fatalf("expected second line fill %v, got %v", uv.Rect(0, 1, 6, 1), got)
+	}
+
+	got := dst.CellAt(1, 0)
+	if got == nil || !got.Equal(want) {
+		t.Fatalf("expected main-screen cell %v at 1,0 after alt-screen return, got %#v", want, got)
+	}
+}

@@ -176,10 +176,6 @@ func (e *Emulator) Draw(scr uv.Screen, area uv.Rectangle) {
 	}
 
 	dirty := e.Touched()
-	if len(dirty) == 0 {
-		return
-	}
-
 	bg := uv.EmptyCell
 	bg.Style.Bg = e.BackgroundColor()
 
@@ -241,6 +237,8 @@ func dirtySpan(line *uv.LineData, width int) (start, end int) {
 func (e *Emulator) expandDirtyStart(y, start int) int {
 	for start > 0 {
 		cell := e.CellAt(start, y)
+		// A zero cell is the trailing continuation slot of a wide character.
+		// Back up until we reach the leading cell so the redraw does not clip it.
 		if cell != nil && cell.IsZero() {
 			start--
 			continue
