@@ -178,6 +178,18 @@ func TestSendKeyUsesKittyKeyboardEnhancements(t *testing.T) {
 			wantOutput: "\x1b[97;5u",
 		},
 		{
+			name:       "ctrl space uses kitty csi u",
+			enable:     ansi.PushKittyKeyboard(ansi.KittyDisambiguateEscapeCodes),
+			key:        uv.KeyPressEvent{Code: uv.KeySpace, Mod: uv.ModCtrl},
+			wantOutput: "\x1b[32;5u",
+		},
+		{
+			name:       "alt space uses kitty csi u",
+			enable:     ansi.PushKittyKeyboard(ansi.KittyDisambiguateEscapeCodes),
+			key:        uv.KeyPressEvent{Code: uv.KeySpace, Mod: uv.ModAlt},
+			wantOutput: "\x1b[32;3u",
+		},
+		{
 			name:       "escape uses kitty csi u",
 			enable:     ansi.PushKittyKeyboard(ansi.KittyDisambiguateEscapeCodes),
 			key:        uv.KeyPressEvent{Code: uv.KeyEscape},

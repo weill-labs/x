@@ -157,7 +157,7 @@ func shouldEncodeKittyKey(key uv.Key, flags int, eventType int) bool {
 }
 
 func keyProducesText(key uv.Key) bool {
-	return key.Text != "" || (unicode.IsPrint(key.Code) && key.Code != uv.KeySpace)
+	return key.Text != "" || unicode.IsPrint(key.Code)
 }
 
 func kittyAlwaysLegacyKey(code rune) bool {
