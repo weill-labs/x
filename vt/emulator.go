@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"io"
 	"sync/atomic"
+	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/screen"
@@ -22,6 +23,9 @@ type Emulator struct {
 
 	// The terminal's indexed 256 colors.
 	colors [256]color.Color
+
+	// The Kitty keyboard enhancement stacks for the main and alternate screens.
+	kittyKeyboard [2]kittyKeyboardMode
 
 	// Both main and alt screens and a pointer to the currently active screen.
 	scrs [2]Screen
@@ -74,6 +78,13 @@ type Emulator struct {
 	// atPhantom indicates if the cursor is out of bounds.
 	// When true, and a character is written, the cursor is moved to the next line.
 	atPhantom bool
+
+	// Synchronized output temporarily buffers PTY output after DECSET ?2026.
+	syncOutputActive   bool
+	syncOutputBuffer   []byte
+	syncOutputDeadline time.Time
+	syncOutputTimeout  time.Duration
+	now                func() time.Time
 }
 
 var _ Terminal = (*Emulator)(nil)
@@ -104,6 +115,8 @@ func NewEmulator(w, h int) *Emulator {
 	t.resetModes()
 	t.tabstops = uv.DefaultTabStops(w)
 	t.registerDefaultHandlers()
+	t.syncOutputTimeout = defaultSynchronizedOutputTimeout
+	t.now = time.Now
 
 	// Default colors
 	t.defaultFg = color.White
@@ -127,11 +140,13 @@ func (e *Emulator) SetCallbacks(cb Callbacks) {
 
 // Touched returns the touched lines in the current screen buffer.
 func (e *Emulator) Touched() []*uv.LineData {
+	e.flushExpiredSynchronizedOutput()
 	return e.scr.Touched()
 }
 
 // String returns a string representation of the underlying screen buffer.
 func (e *Emulator) String() string {
+	e.flushExpiredSynchronizedOutput()
 	s := e.scr.buf.String()
 	return uv.TrimSpace(s)
 }
@@ -139,6 +154,7 @@ func (e *Emulator) String() string {
 // Render renders a snapshot of the terminal screen as a string with styles and
 // links encoded as ANSI escape codes.
 func (e *Emulator) Render() string {
+	e.flushExpiredSynchronizedOutput()
 	return e.scr.buf.Render()
 }
 
@@ -146,12 +162,14 @@ var _ uv.Screen = (*Emulator)(nil)
 
 // Bounds returns the bounds of the terminal.
 func (e *Emulator) Bounds() uv.Rectangle {
+	e.flushExpiredSynchronizedOutput()
 	return e.scr.Bounds()
 }
 
 // CellAt returns the current focused screen cell at the given x, y position.
 // It returns nil if the cell is out of bounds.
 func (e *Emulator) CellAt(x, y int) *uv.Cell {
+	e.flushExpiredSynchronizedOutput()
 	return e.scr.CellAt(x, y)
 }
 
@@ -162,6 +180,7 @@ func (e *Emulator) SetCell(x, y int, c *uv.Cell) {
 
 // WidthMethod returns the width method used by the terminal.
 func (e *Emulator) WidthMethod() uv.WidthMethod {
+	e.flushExpiredSynchronizedOutput()
 	if e.isModeSet(ansi.ModeUnicodeCore) {
 		return ansi.GraphemeWidth
 	}
@@ -170,14 +189,20 @@ func (e *Emulator) WidthMethod() uv.WidthMethod {
 
 // Draw implements the [uv.Drawable] interface.
 func (e *Emulator) Draw(scr uv.Screen, area uv.Rectangle) {
-	width, height := e.Width(), e.Height()
+	e.flushExpiredSynchronizedOutput()
+
+	active := e.scr
+	width, height := active.Width(), active.Height()
 	if width == 0 || height == 0 {
 		return
 	}
 
-	dirty := e.Touched()
+	dirty := active.Touched()
 	bg := uv.EmptyCell
-	bg.Style.Bg = e.BackgroundColor()
+	bg.Style.Bg = e.defaultBg
+	if e.bgColor != nil {
+		bg.Style.Bg = e.bgColor
+	}
 
 	for y, line := range dirty {
 		if line == nil || y < 0 || y >= height {
@@ -194,7 +219,7 @@ func (e *Emulator) Draw(scr uv.Screen, area uv.Rectangle) {
 		screen.FillArea(scr, &bg, drawArea)
 
 		for x := start; x < end; {
-			cell := e.CellAt(x, y)
+			cell := active.CellAt(x, y)
 			if cell == nil || cell.IsZero() {
 				x++
 				continue
@@ -222,7 +247,7 @@ func (e *Emulator) Draw(scr uv.Screen, area uv.Rectangle) {
 		}
 	}
 
-	e.scr.ClearTouched()
+	active.ClearTouched()
 }
 
 func dirtySpan(line *uv.LineData, width int) (start, end int) {
@@ -257,16 +282,19 @@ func (e *Emulator) expandDirtyStart(y, start int) int {
 
 // Height returns the height of the terminal.
 func (e *Emulator) Height() int {
+	e.flushExpiredSynchronizedOutput()
 	return e.scr.Height()
 }
 
 // Width returns the width of the terminal.
 func (e *Emulator) Width() int {
+	e.flushExpiredSynchronizedOutput()
 	return e.scr.Width()
 }
 
 // CursorPosition returns the terminal's cursor position.
 func (e *Emulator) CursorPosition() uv.Position {
+	e.flushExpiredSynchronizedOutput()
 	x, y := e.scr.CursorPosition()
 	return uv.Pos(x, y)
 }
@@ -348,18 +376,12 @@ func (e *Emulator) Write(p []byte) (n int, err error) {
 		return 0, io.ErrClosedPipe
 	}
 
-	for i := range p {
-		e.parser.Advance(p[i])
-		state := e.parser.State()
-		// flush grapheme if we transitioned to a non-utf8 state or we have
-		// written the whole byte slice.
-		if len(e.grapheme) > 0 {
-			if (e.lastState == parser.GroundState && state != parser.Utf8State) || i == len(p)-1 {
-				e.flushGrapheme()
-			}
-		}
-		e.lastState = state
+	e.flushExpiredSynchronizedOutput()
+	if e.syncOutputActive {
+		e.bufferSynchronizedOutput(p)
+		return len(p), nil
 	}
+	e.parseBytes(p)
 	return len(p), nil
 }
 
@@ -402,6 +424,7 @@ func (e *Emulator) SendKeys(keys ...uv.KeyEvent) {
 // the foreground color is not set which means the outer terminal color is
 // used.
 func (e *Emulator) ForegroundColor() color.Color {
+	e.flushExpiredSynchronizedOutput()
 	if e.fgColor == nil {
 		return e.defaultFg
 	}
@@ -431,6 +454,7 @@ func (e *Emulator) SetDefaultForegroundColor(c color.Color) {
 // the background color is not set which means the outer terminal color is
 // used.
 func (e *Emulator) BackgroundColor() color.Color {
+	e.flushExpiredSynchronizedOutput()
 	if e.bgColor == nil {
 		return e.defaultBg
 	}
@@ -459,6 +483,7 @@ func (e *Emulator) SetDefaultBackgroundColor(c color.Color) {
 // CursorColor returns the terminal's cursor color. This returns nil if the
 // cursor color is not set which means the outer terminal color is used.
 func (e *Emulator) CursorColor() color.Color {
+	e.flushExpiredSynchronizedOutput()
 	if e.curColor == nil {
 		return e.defaultCur
 	}
@@ -487,6 +512,7 @@ func (e *Emulator) SetDefaultCursorColor(c color.Color) {
 // IndexedColor returns a terminal's indexed color. An indexed color is a color
 // between 0 and 255.
 func (e *Emulator) IndexedColor(i int) color.Color {
+	e.flushExpiredSynchronizedOutput()
 	if i < 0 || i > 255 {
 		return nil
 	}
@@ -525,6 +551,7 @@ func (e *Emulator) logf(format string, v ...any) {
 // Returns nil if the terminal is in alternate screen mode, as the alternate
 // screen typically doesn't use scrollback.
 func (e *Emulator) Scrollback() *Scrollback {
+	e.flushExpiredSynchronizedOutput()
 	// Return main screen's scrollback only
 	return e.scrs[0].Scrollback()
 }
@@ -567,5 +594,6 @@ func (e *Emulator) ClearScrollback() {
 
 // IsAltScreen returns whether the terminal is in alternate screen mode.
 func (e *Emulator) IsAltScreen() bool {
+	e.flushExpiredSynchronizedOutput()
 	return e.scr == &e.scrs[1]
 }
