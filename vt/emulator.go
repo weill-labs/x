@@ -190,32 +190,94 @@ func (e *Emulator) WidthMethod() uv.WidthMethod {
 // Draw implements the [uv.Drawable] interface.
 func (e *Emulator) Draw(scr uv.Screen, area uv.Rectangle) {
 	e.flushExpiredSynchronizedOutput()
+
+	active := e.scr
+	width, height := active.Width(), active.Height()
+	if width == 0 || height == 0 {
+		return
+	}
+
+	dirty := active.Touched()
 	bg := uv.EmptyCell
-	bg.Style.Bg = e.BackgroundColor()
-	screen.FillArea(scr, &bg, area)
-	for y := range e.Touched() {
-		if y < 0 || y >= e.Height() {
+	bg.Style.Bg = e.defaultBg
+	if e.bgColor != nil {
+		bg.Style.Bg = e.bgColor
+	}
+
+	for y, line := range dirty {
+		if line == nil || y < 0 || y >= height {
 			continue
 		}
-		for x := 0; x < e.Width(); {
-			w := 1
-			cell := e.CellAt(x, y)
-			if cell != nil {
-				cell = cell.Clone()
-				if cell.Width > 1 {
-					w = cell.Width
-				}
-				if cell.Style.Bg == nil && e.bgColor != nil {
-					cell.Style.Bg = e.bgColor
-				}
-				if cell.Style.Fg == nil && e.fgColor != nil {
-					cell.Style.Fg = e.fgColor
-				}
-				scr.SetCell(x+area.Min.X, y+area.Min.Y, cell)
+
+		start, end := dirtySpan(line, width)
+		if end <= start {
+			continue
+		}
+
+		start = e.expandDirtyStart(y, start)
+		drawArea := uv.Rect(area.Min.X+start, area.Min.Y+y, end-start, 1)
+		screen.FillArea(scr, &bg, drawArea)
+
+		for x := start; x < end; {
+			cell := active.CellAt(x, y)
+			if cell == nil || cell.IsZero() {
+				x++
+				continue
 			}
+
+			w := max(cell.Width, 1)
+			if cell.Equal(&uv.EmptyCell) {
+				x += w
+				continue
+			}
+
+			drawCell := cell
+			if (drawCell.Style.Bg == nil && e.bgColor != nil) ||
+				(drawCell.Style.Fg == nil && e.fgColor != nil) {
+				drawCell = cell.Clone()
+				if drawCell.Style.Bg == nil && e.bgColor != nil {
+					drawCell.Style.Bg = e.bgColor
+				}
+				if drawCell.Style.Fg == nil && e.fgColor != nil {
+					drawCell.Style.Fg = e.fgColor
+				}
+			}
+			scr.SetCell(x+area.Min.X, y+area.Min.Y, drawCell)
 			x += w
 		}
 	}
+
+	active.ClearTouched()
+}
+
+func dirtySpan(line *uv.LineData, width int) (start, end int) {
+	start = max(line.FirstCell, 0)
+	end = min(line.LastCell, width)
+	if end <= start && start < width {
+		end = start + 1
+	}
+	return start, end
+}
+
+func (e *Emulator) expandDirtyStart(y, start int) int {
+	for start > 0 {
+		cell := e.CellAt(start, y)
+		// A zero cell is the trailing continuation slot of a wide character.
+		// Back up until we reach the leading cell so the redraw does not clip it.
+		if cell != nil && cell.IsZero() {
+			start--
+			continue
+		}
+
+		left := e.CellAt(start-1, y)
+		if left != nil && left.Width > 1 && start-1+left.Width > start {
+			start--
+			continue
+		}
+
+		break
+	}
+	return start
 }
 
 // Height returns the height of the terminal.

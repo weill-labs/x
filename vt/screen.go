@@ -26,6 +26,7 @@ func NewScreen(w, h int) *Screen {
 		scrollback: NewScrollback(DefaultScrollbackSize),
 	}
 	s.scroll = s.buf.Bounds()
+	s.invalidate()
 	return &s
 }
 
@@ -37,7 +38,7 @@ func (s *Screen) Reset() {
 	s.cur = Cursor{}
 	s.saved = Cursor{}
 	s.scroll = s.buf.Bounds()
-	s.buf.Touched = nil
+	s.invalidate()
 }
 
 // Bounds returns the bounds of the screen.
@@ -52,7 +53,12 @@ func (s *Screen) Touched() []*uv.LineData {
 
 // ClearTouched clears the touched state.
 func (s *Screen) ClearTouched() {
-	s.buf.Touched = nil
+	if s.buf == nil || s.buf.Touched == nil {
+		return
+	}
+	for i := range s.buf.Touched {
+		s.buf.Touched[i] = nil
+	}
 }
 
 // CellAt returns the cell at the given x, y position.
@@ -76,9 +82,9 @@ func (s *Screen) Resize(width int, height int) {
 		s.buf = uv.NewRenderBuffer(width, height)
 	} else {
 		s.buf.Resize(width, height)
-		s.buf.Touched = nil
 	}
 	s.scroll = s.buf.Bounds()
+	s.invalidate()
 }
 
 // Width returns the width of the screen.
@@ -299,7 +305,13 @@ func (s *Screen) InsertCell(n int) {
 	}
 
 	x, y := s.cur.X, s.cur.Y
+	if y < s.scroll.Min.Y || y >= s.scroll.Max.Y ||
+		x < s.scroll.Min.X || x >= s.scroll.Max.X {
+		return
+	}
+
 	s.buf.InsertCellArea(x, y, n, s.blankCell(), s.scroll)
+	s.buf.TouchLine(x, y, s.scroll.Max.X-x)
 }
 
 // DeleteCell deletes n cells at the cursor position moving cells to the left.
@@ -310,7 +322,13 @@ func (s *Screen) DeleteCell(n int) {
 	}
 
 	x, y := s.cur.X, s.cur.Y
+	if y < s.scroll.Min.Y || y >= s.scroll.Max.Y ||
+		x < s.scroll.Min.X || x >= s.scroll.Max.X {
+		return
+	}
+
 	s.buf.DeleteCellArea(x, y, n, s.blankCell(), s.scroll)
+	s.buf.TouchLine(x, y, s.scroll.Max.X-x)
 }
 
 // ScrollUp scrolls the content up n lines within the given region. Lines
@@ -411,6 +429,25 @@ func (s *Screen) touchArea(area uv.Rectangle) {
 	for y := area.Min.Y; y < area.Max.Y; y++ {
 		s.buf.TouchLine(area.Min.X, y, area.Max.X-area.Min.X)
 	}
+}
+
+// invalidate marks the entire screen as dirty.
+func (s *Screen) invalidate() {
+	if s.buf == nil {
+		return
+	}
+
+	height := s.buf.Height()
+	if cap(s.buf.Touched) < height {
+		s.buf.Touched = make([]*uv.LineData, height)
+	} else {
+		s.buf.Touched = s.buf.Touched[:height]
+		for i := range s.buf.Touched {
+			s.buf.Touched[i] = nil
+		}
+	}
+
+	s.touchArea(s.Bounds())
 }
 
 // Scrollback returns the screen's scrollback buffer.
