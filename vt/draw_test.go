@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"slices"
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
@@ -41,11 +42,8 @@ func TestEmulatorDrawUsesDirtySpans(t *testing.T) {
 	if dst.setCalls != 1 {
 		t.Fatalf("expected 1 SetCell call, got %d", dst.setCalls)
 	}
-	if len(dst.fillAreas) != 1 {
-		t.Fatalf("expected 1 FillArea call, got %d", len(dst.fillAreas))
-	}
-	if got := dst.fillAreas[0]; got != uv.Rect(5, 2, 1, 1) {
-		t.Fatalf("expected dirty fill area %v, got %v", uv.Rect(5, 2, 1, 1), got)
+	if len(dst.fillAreas) != 0 {
+		t.Fatalf("expected no FillArea calls, got %d", len(dst.fillAreas))
 	}
 
 	got := dst.CellAt(5, 2)
@@ -66,6 +64,56 @@ func TestEmulatorDrawUsesDirtySpans(t *testing.T) {
 	}
 	if len(dst.fillAreas) != 0 {
 		t.Fatalf("expected no FillArea calls on redraw without changes, got %d", len(dst.fillAreas))
+	}
+}
+
+func TestEmulatorDrawClearsDirtyBlankCellsWithoutFillArea(t *testing.T) {
+	e := NewEmulator(10, 4)
+	e.SetCell(5, 2, &uv.Cell{Content: "X", Width: 1})
+	e.scr.ClearTouched()
+	e.SetCell(5, 2, nil)
+
+	dst := newCountingScreen(10, 4)
+	dst.SetCell(5, 2, &uv.Cell{Content: "Y", Width: 1})
+
+	e.Draw(dst, uv.Rect(0, 0, 10, 4))
+
+	if len(dst.fillAreas) != 0 {
+		t.Fatalf("expected no FillArea calls, got %d", len(dst.fillAreas))
+	}
+	if dst.setCalls != 1 {
+		t.Fatalf("expected 1 SetCell call for cleared cell, got %d", dst.setCalls)
+	}
+	if got := dst.CellAt(5, 2); got != nil {
+		t.Fatalf("expected cleared destination cell at 5,2, got %#v", got)
+	}
+}
+
+func TestScreenEachTouchedLineVisitsDirtyRowsOnly(t *testing.T) {
+	s := NewScreen(8, 6)
+	s.ClearTouched()
+	s.SetCell(2, 1, &uv.Cell{Content: "A", Width: 1})
+	s.SetCell(4, 4, &uv.Cell{Content: "B", Width: 1})
+
+	var got []int
+	s.eachTouchedLine(func(y int, line *uv.LineData) {
+		if line == nil {
+			t.Fatalf("eachTouchedLine(%d) received nil line", y)
+		}
+		got = append(got, y)
+	})
+
+	if want := []int{1, 4}; !slices.Equal(got, want) {
+		t.Fatalf("eachTouchedLine rows = %v, want %v", got, want)
+	}
+
+	s.ClearTouched()
+	got = got[:0]
+	s.eachTouchedLine(func(y int, line *uv.LineData) {
+		got = append(got, y)
+	})
+	if len(got) != 0 {
+		t.Fatalf("eachTouchedLine after ClearTouched = %v, want none", got)
 	}
 }
 
