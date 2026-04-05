@@ -11,6 +11,10 @@ type Screen struct {
 	cb *Callbacks
 	// The buffer of the screen.
 	buf *uv.RenderBuffer
+	// touchedRows tracks rows with non-nil entries in buf.Touched.
+	touchedRows []int
+	// touchedSet prevents duplicate row entries in touchedRows.
+	touchedSet []bool
 	// The cur of the screen.
 	cur, saved Cursor
 	// scroll is the scroll region.
@@ -59,6 +63,7 @@ func (s *Screen) ClearTouched() {
 	for i := range s.buf.Touched {
 		s.buf.Touched[i] = nil
 	}
+	s.clearTouchedRows()
 }
 
 // CellAt returns the cell at the given x, y position.
@@ -68,7 +73,12 @@ func (s *Screen) CellAt(x int, y int) *uv.Cell {
 
 // SetCell sets the cell at the given x, y position.
 func (s *Screen) SetCell(x, y int, c *uv.Cell) {
+	if cellsEqual(s.buf.CellAt(x, y), c) {
+		s.buf.SetCell(x, y, c)
+		return
+	}
 	s.buf.SetCell(x, y, c)
+	s.recordTouchedRow(y)
 }
 
 // Height returns the height of the screen.
@@ -131,7 +141,7 @@ func (s *Screen) isLineEmpty(line uv.Line) bool {
 // ClearArea clears the given area.
 func (s *Screen) ClearArea(area uv.Rectangle) {
 	s.buf.ClearArea(area)
-	s.touchArea(area)
+	s.recordTouchedArea(area)
 }
 
 // Fill fills the screen or part of it.
@@ -142,7 +152,7 @@ func (s *Screen) Fill(c *uv.Cell) {
 // FillArea fills the given area with the given cell.
 func (s *Screen) FillArea(c *uv.Cell, area uv.Rectangle) {
 	s.buf.FillArea(c, area)
-	s.touchArea(area)
+	s.recordTouchedArea(area)
 }
 
 // setHorizontalMargins sets the horizontal margins.
@@ -311,7 +321,7 @@ func (s *Screen) InsertCell(n int) {
 	}
 
 	s.buf.InsertCellArea(x, y, n, s.blankCell(), s.scroll)
-	s.buf.TouchLine(x, y, s.scroll.Max.X-x)
+	s.touchLine(x, y, s.scroll.Max.X-x)
 }
 
 // DeleteCell deletes n cells at the cursor position moving cells to the left.
@@ -328,7 +338,7 @@ func (s *Screen) DeleteCell(n int) {
 	}
 
 	s.buf.DeleteCellArea(x, y, n, s.blankCell(), s.scroll)
-	s.buf.TouchLine(x, y, s.scroll.Max.X-x)
+	s.touchLine(x, y, s.scroll.Max.X-x)
 }
 
 // ScrollUp scrolls the content up n lines within the given region. Lines
@@ -369,6 +379,7 @@ func (s *Screen) InsertLine(n int) bool {
 	}
 
 	s.buf.InsertLineArea(y, n, s.blankCell(), s.scroll)
+	s.recordTouchedArea(s.scroll)
 
 	return true
 }
@@ -407,6 +418,7 @@ func (s *Screen) DeleteLine(n int) bool {
 	}
 
 	s.buf.DeleteLineArea(y, n, s.blankCell(), scroll)
+	s.recordTouchedArea(scroll)
 
 	return true
 }
@@ -424,11 +436,75 @@ func (s *Screen) blankCell() *uv.Cell {
 	return &c
 }
 
+func cellsEqual(a, b *uv.Cell) bool {
+	switch {
+	case a == nil || b == nil:
+		return a == nil && b == nil
+	default:
+		return a.Equal(b)
+	}
+}
+
+func (s *Screen) ensureTouchedTracking(height int) {
+	if cap(s.touchedSet) < height {
+		s.touchedSet = make([]bool, height)
+	} else {
+		s.touchedSet = s.touchedSet[:height]
+	}
+}
+
+func (s *Screen) clearTouchedRows() {
+	for _, y := range s.touchedRows {
+		if y >= 0 && y < len(s.touchedSet) {
+			s.touchedSet[y] = false
+		}
+	}
+	s.touchedRows = s.touchedRows[:0]
+}
+
+func (s *Screen) recordTouchedRow(y int) {
+	if s.buf == nil || y < 0 || y >= s.buf.Height() {
+		return
+	}
+	if len(s.touchedSet) != s.buf.Height() {
+		s.ensureTouchedTracking(s.buf.Height())
+	}
+	if s.touchedSet[y] {
+		return
+	}
+	s.touchedSet[y] = true
+	s.touchedRows = append(s.touchedRows, y)
+}
+
+func (s *Screen) recordTouchedArea(area uv.Rectangle) {
+	for y := area.Min.Y; y < area.Max.Y; y++ {
+		s.recordTouchedRow(y)
+	}
+}
+
+func (s *Screen) eachTouchedLine(fn func(y int, line *uv.LineData)) {
+	for _, y := range s.touchedRows {
+		if y < 0 || y >= len(s.buf.Touched) {
+			continue
+		}
+		line := s.buf.Touched[y]
+		if line == nil {
+			continue
+		}
+		fn(y, line)
+	}
+}
+
 // touchArea marks all lines in the given area as touched.
 func (s *Screen) touchArea(area uv.Rectangle) {
 	for y := area.Min.Y; y < area.Max.Y; y++ {
-		s.buf.TouchLine(area.Min.X, y, area.Max.X-area.Min.X)
+		s.touchLine(area.Min.X, y, area.Max.X-area.Min.X)
 	}
+}
+
+func (s *Screen) touchLine(x, y, n int) {
+	s.buf.TouchLine(x, y, n)
+	s.recordTouchedRow(y)
 }
 
 // invalidate marks the entire screen as dirty.
@@ -442,10 +518,15 @@ func (s *Screen) invalidate() {
 		s.buf.Touched = make([]*uv.LineData, height)
 	} else {
 		s.buf.Touched = s.buf.Touched[:height]
-		for i := range s.buf.Touched {
-			s.buf.Touched[i] = nil
-		}
 	}
+	s.ensureTouchedTracking(height)
+	for i := range s.buf.Touched {
+		s.buf.Touched[i] = nil
+	}
+	for i := range s.touchedSet {
+		s.touchedSet[i] = false
+	}
+	s.touchedRows = s.touchedRows[:0]
 
 	s.touchArea(s.Bounds())
 }
