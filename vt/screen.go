@@ -73,12 +73,11 @@ func (s *Screen) CellAt(x int, y int) *uv.Cell {
 
 // SetCell sets the cell at the given x, y position.
 func (s *Screen) SetCell(x, y int, c *uv.Cell) {
-	if cellsEqual(s.buf.CellAt(x, y), c) {
-		s.buf.SetCell(x, y, c)
-		return
-	}
+	changed := !cellsEqual(s.buf.CellAt(x, y), c)
 	s.buf.SetCell(x, y, c)
-	s.recordTouchedRow(y)
+	if changed {
+		s.recordTouchedRow(y)
+	}
 }
 
 // Height returns the height of the screen.
@@ -449,7 +448,11 @@ func (s *Screen) ensureTouchedTracking(height int) {
 	if cap(s.touchedSet) < height {
 		s.touchedSet = make([]bool, height)
 	} else {
+		oldLen := len(s.touchedSet)
 		s.touchedSet = s.touchedSet[:height]
+		for i := oldLen; i < height; i++ {
+			s.touchedSet[i] = false
+		}
 	}
 }
 
