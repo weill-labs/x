@@ -1,8 +1,6 @@
 package vt
 
 import (
-	"slices"
-
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -11,7 +9,7 @@ const DefaultScrollbackSize = 10000
 
 // Scrollback represents a scrollback buffer that stores lines scrolled off the screen.
 type Scrollback struct {
-	lines    []uv.Line
+	lines    scrollbackRing
 	maxLines int
 }
 
@@ -21,7 +19,7 @@ func NewScrollback(maxLines int) *Scrollback {
 		maxLines = DefaultScrollbackSize
 	}
 	return &Scrollback{
-		lines:    make([]uv.Line, 0, min(maxLines, 1000)), // Pre-allocate reasonable capacity
+		lines:    newScrollbackRing(maxLines),
 		maxLines: maxLines,
 	}
 }
@@ -33,25 +31,7 @@ func (s *Scrollback) Push(line uv.Line) {
 		return
 	}
 
-	// Find last non-empty cell to trim trailing empty cells.
-	// This helps with wrapping and window resizing.
-	lastNonEmpty := -1
-	for i := len(line) - 1; i >= 0; i-- {
-		c := &line[i]
-		if !c.IsZero() && !c.Equal(&uv.EmptyCell) {
-			lastNonEmpty = i
-			break
-		}
-	}
-
-	// Clone the line content up to and including the last non-empty cell
-	cloned := slices.Clone(line[:lastNonEmpty+1])
-
-	if len(s.lines) >= s.maxLines {
-		// Remove oldest line and append new one
-		s.lines = slices.Delete(s.lines, 0, 1)
-	}
-	s.lines = append(s.lines, cloned)
+	s.lines.push(trimTrailingEmptyCells(line))
 }
 
 // PushN adds n lines from the buffer starting at line y to the scrollback.
@@ -72,7 +52,7 @@ func (s *Scrollback) Len() int {
 	if s == nil {
 		return 0
 	}
-	return len(s.lines)
+	return s.lines.len
 }
 
 // MaxLines returns the maximum number of lines the scrollback buffer can hold.
@@ -91,20 +71,17 @@ func (s *Scrollback) SetMaxLines(maxLines int) {
 	}
 
 	s.maxLines = maxLines
-	if len(s.lines) > maxLines {
-		// Remove oldest lines
-		s.lines = s.lines[len(s.lines)-maxLines:]
-	}
+	s.lines.resize(maxLines)
 }
 
 // Line returns the line at the given index.
 // Index 0 is the oldest line, Len()-1 is the most recent.
 // Returns nil if index is out of bounds.
 func (s *Scrollback) Line(index int) uv.Line {
-	if s == nil || index < 0 || index >= len(s.lines) {
+	if s == nil {
 		return nil
 	}
-	return s.lines[index]
+	return s.lines.line(index)
 }
 
 // Lines returns all lines in the scrollback buffer.
@@ -113,7 +90,7 @@ func (s *Scrollback) Lines() []uv.Line {
 	if s == nil {
 		return nil
 	}
-	return s.lines
+	return s.lines.orderedLines()
 }
 
 // Clear removes all lines from the scrollback buffer.
@@ -121,7 +98,7 @@ func (s *Scrollback) Clear() {
 	if s == nil {
 		return
 	}
-	s.lines = s.lines[:0]
+	s.lines.clear()
 }
 
 // CellAt returns the cell at the given position in the scrollback buffer.
@@ -133,4 +110,17 @@ func (s *Scrollback) CellAt(x, y int) *uv.Cell {
 		return nil
 	}
 	return &line[x]
+}
+
+func trimTrailingEmptyCells(line uv.Line) uv.Line {
+	lastNonEmpty := -1
+	for i := len(line) - 1; i >= 0; i-- {
+		c := &line[i]
+		if !c.IsZero() && !c.Equal(&uv.EmptyCell) {
+			lastNonEmpty = i
+			break
+		}
+	}
+
+	return line[:lastNonEmpty+1]
 }

@@ -14,7 +14,7 @@ func (e *Emulator) handlePrint(r rune) {
 			// If we have a grapheme buffer, flush it before handling the ASCII character.
 			e.flushGrapheme()
 		}
-		e.handleGrapheme(string(r), 1)
+		e.handleGrapheme(e.printContent.printableASCII(r), 1)
 	} else {
 		e.grapheme = append(e.grapheme, r)
 	}
