@@ -48,6 +48,8 @@ type Emulator struct {
 	lastChar rune // either ansi.Rune or ansi.Grapheme
 	// A slice of runes to compose a grapheme.
 	grapheme []rune
+	// Reusable printable content for the print path.
+	printContent *printContentCache
 
 	// The ANSI parser to use.
 	parser *ansi.Parser
@@ -117,6 +119,7 @@ func NewEmulator(w, h int) *Emulator {
 	t.registerDefaultHandlers()
 	t.syncOutputTimeout = defaultSynchronizedOutputTimeout
 	t.now = time.Now
+	t.printContent = newPrintContentCache()
 
 	// Default colors
 	t.defaultFg = color.White
