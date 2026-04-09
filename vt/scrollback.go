@@ -31,18 +31,7 @@ func (s *Scrollback) Push(line uv.Line) {
 		return
 	}
 
-	// Find last non-empty cell to trim trailing empty cells.
-	// This helps with wrapping and window resizing.
-	lastNonEmpty := -1
-	for i := len(line) - 1; i >= 0; i-- {
-		c := &line[i]
-		if !c.IsZero() && !c.Equal(&uv.EmptyCell) {
-			lastNonEmpty = i
-			break
-		}
-	}
-
-	s.lines.push(line[:lastNonEmpty+1])
+	s.lines.push(trimTrailingEmptyCells(line))
 }
 
 // PushN adds n lines from the buffer starting at line y to the scrollback.
@@ -121,4 +110,17 @@ func (s *Scrollback) CellAt(x, y int) *uv.Cell {
 		return nil
 	}
 	return &line[x]
+}
+
+func trimTrailingEmptyCells(line uv.Line) uv.Line {
+	lastNonEmpty := -1
+	for i := len(line) - 1; i >= 0; i-- {
+		c := &line[i]
+		if !c.IsZero() && !c.Equal(&uv.EmptyCell) {
+			lastNonEmpty = i
+			break
+		}
+	}
+
+	return line[:lastNonEmpty+1]
 }

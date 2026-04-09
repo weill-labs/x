@@ -2,6 +2,8 @@ package vt
 
 import uv "github.com/charmbracelet/ultraviolet"
 
+// scrollbackRing keeps scrollback lines in FIFO order without shifting the
+// outer slice as the buffer fills.
 type scrollbackRing struct {
 	lines []uv.Line
 	start int
@@ -67,6 +69,8 @@ func (r *scrollbackRing) clear() {
 	r.len = 0
 }
 
+// cloneLineInto reuses a ring slot's backing array once it is large enough for
+// the next trimmed line.
 func cloneLineInto(dst uv.Line, src uv.Line) uv.Line {
 	if cap(dst) < len(src) {
 		dst = make(uv.Line, len(src))
