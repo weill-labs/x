@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"slices"
 	"testing"
 
 	uv "github.com/charmbracelet/ultraviolet"
@@ -41,11 +42,8 @@ func TestEmulatorDrawUsesDirtySpans(t *testing.T) {
 	if dst.setCalls != 1 {
 		t.Fatalf("expected 1 SetCell call, got %d", dst.setCalls)
 	}
-	if len(dst.fillAreas) != 1 {
-		t.Fatalf("expected 1 FillArea call, got %d", len(dst.fillAreas))
-	}
-	if got := dst.fillAreas[0]; got != uv.Rect(5, 2, 1, 1) {
-		t.Fatalf("expected dirty fill area %v, got %v", uv.Rect(5, 2, 1, 1), got)
+	if len(dst.fillAreas) != 0 {
+		t.Fatalf("expected no FillArea calls, got %d", len(dst.fillAreas))
 	}
 
 	got := dst.CellAt(5, 2)
@@ -66,6 +64,59 @@ func TestEmulatorDrawUsesDirtySpans(t *testing.T) {
 	}
 	if len(dst.fillAreas) != 0 {
 		t.Fatalf("expected no FillArea calls on redraw without changes, got %d", len(dst.fillAreas))
+	}
+}
+
+func TestEmulatorDrawClearsDirtyBlankCellsWithoutFillArea(t *testing.T) {
+	e := NewEmulator(10, 4)
+	e.SetCell(5, 2, &uv.Cell{Content: "X", Width: 1})
+	e.scr.ClearTouched()
+	e.SetCell(5, 2, nil)
+
+	dst := newCountingScreen(10, 4)
+	dst.SetCell(5, 2, &uv.Cell{Content: "Y", Width: 1})
+	dst.setCalls = 0
+
+	e.Draw(dst, uv.Rect(0, 0, 10, 4))
+
+	if len(dst.fillAreas) != 0 {
+		t.Fatalf("expected no FillArea calls, got %d", len(dst.fillAreas))
+	}
+	if dst.setCalls != 1 {
+		t.Fatalf("expected 1 SetCell call for cleared cell, got %d", dst.setCalls)
+	}
+	want := uv.EmptyCell
+	want.Style.Bg = e.defaultBg
+	if got := dst.CellAt(5, 2); got == nil || !got.Equal(&want) {
+		t.Fatalf("expected cleared destination cell %#v at 5,2, got %#v", want, got)
+	}
+}
+
+func TestScreenEachTouchedLineVisitsDirtyRowsOnly(t *testing.T) {
+	s := NewScreen(8, 6)
+	s.ClearTouched()
+	s.SetCell(2, 1, &uv.Cell{Content: "A", Width: 1})
+	s.SetCell(4, 4, &uv.Cell{Content: "B", Width: 1})
+
+	var got []int
+	s.eachTouchedLine(func(y int, line *uv.LineData) {
+		if line == nil {
+			t.Fatalf("eachTouchedLine(%d) received nil line", y)
+		}
+		got = append(got, y)
+	})
+
+	if want := []int{1, 4}; !slices.Equal(got, want) {
+		t.Fatalf("eachTouchedLine rows = %v, want %v", got, want)
+	}
+
+	s.ClearTouched()
+	got = got[:0]
+	s.eachTouchedLine(func(y int, line *uv.LineData) {
+		got = append(got, y)
+	})
+	if len(got) != 0 {
+		t.Fatalf("eachTouchedLine after ClearTouched = %v, want none", got)
 	}
 }
 
@@ -108,18 +159,20 @@ func TestAltScreenReturnInvalidatesMainScreen(t *testing.T) {
 	dst := newCountingScreen(6, 2)
 	e.Draw(dst, uv.Rect(0, 0, 6, 2))
 
-	if len(dst.fillAreas) != 2 {
-		t.Fatalf("expected full redraw of both lines, got %d fill areas", len(dst.fillAreas))
+	if len(dst.fillAreas) != 0 {
+		t.Fatalf("expected no FillArea calls, got %d", len(dst.fillAreas))
 	}
-	if got := dst.fillAreas[0]; got != uv.Rect(0, 0, 6, 1) {
-		t.Fatalf("expected first line fill %v, got %v", uv.Rect(0, 0, 6, 1), got)
-	}
-	if got := dst.fillAreas[1]; got != uv.Rect(0, 1, 6, 1) {
-		t.Fatalf("expected second line fill %v, got %v", uv.Rect(0, 1, 6, 1), got)
+	if dst.setCalls != 12 {
+		t.Fatalf("expected full redraw via 12 SetCell calls, got %d", dst.setCalls)
 	}
 
 	got := dst.CellAt(1, 0)
 	if got == nil || !got.Equal(want) {
 		t.Fatalf("expected main-screen cell %v at 1,0 after alt-screen return, got %#v", want, got)
+	}
+	blank := uv.EmptyCell
+	blank.Style.Bg = e.defaultBg
+	if got := dst.CellAt(0, 1); got == nil || !got.Equal(&blank) {
+		t.Fatalf("expected cleared second line after alt-screen return, got %#v", got)
 	}
 }

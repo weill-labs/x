@@ -7,7 +7,6 @@ import (
 	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/ultraviolet/screen"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/parser"
 )
@@ -197,36 +196,35 @@ func (e *Emulator) Draw(scr uv.Screen, area uv.Rectangle) {
 		return
 	}
 
-	dirty := active.Touched()
 	bg := uv.EmptyCell
 	bg.Style.Bg = e.defaultBg
 	if e.bgColor != nil {
 		bg.Style.Bg = e.bgColor
 	}
 
-	for y, line := range dirty {
-		if line == nil || y < 0 || y >= height {
-			continue
-		}
-
+	active.eachTouchedLine(func(y int, line *uv.LineData) {
 		start, end := dirtySpan(line, width)
 		if end <= start {
-			continue
+			return
 		}
 
 		start = e.expandDirtyStart(y, start)
-		drawArea := uv.Rect(area.Min.X+start, area.Min.Y+y, end-start, 1)
-		screen.FillArea(scr, &bg, drawArea)
+		row := active.buf.Line(y)
 
 		for x := start; x < end; {
-			cell := active.CellAt(x, y)
+			var cell *uv.Cell
+			if row != nil && x >= 0 && x < len(row) {
+				cell = &row[x]
+			}
 			if cell == nil || cell.IsZero() {
+				scr.SetCell(x+area.Min.X, y+area.Min.Y, &bg)
 				x++
 				continue
 			}
 
 			w := max(cell.Width, 1)
 			if cell.Equal(&uv.EmptyCell) {
+				scr.SetCell(x+area.Min.X, y+area.Min.Y, &bg)
 				x += w
 				continue
 			}
@@ -245,7 +243,7 @@ func (e *Emulator) Draw(scr uv.Screen, area uv.Rectangle) {
 			scr.SetCell(x+area.Min.X, y+area.Min.Y, drawCell)
 			x += w
 		}
-	}
+	})
 
 	active.ClearTouched()
 }
