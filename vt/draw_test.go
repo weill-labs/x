@@ -176,3 +176,43 @@ func TestAltScreenReturnInvalidatesMainScreen(t *testing.T) {
 		t.Fatalf("expected cleared second line after alt-screen return, got %#v", got)
 	}
 }
+
+func TestTouchRowForcesDrawOnCleanRow(t *testing.T) {
+	t.Parallel()
+
+	e := NewEmulator(6, 3)
+
+	// Write content to row 1 and draw it once to establish baseline.
+	e.SetCell(0, 1, &uv.Cell{Content: "A", Width: 1})
+	dst := newCountingScreen(6, 3)
+	e.Draw(dst, uv.Rect(0, 0, 6, 3))
+
+	// dst now has "A" at (0,1). Overwrite it so we can detect a redraw.
+	dst.SetCell(0, 1, &uv.Cell{Content: "Z", Width: 1})
+	dst.setCalls = 0
+
+	// After Draw, touched state is cleared. A second Draw should be a no-op.
+	e.Draw(dst, uv.Rect(0, 0, 6, 3))
+	if dst.setCalls != 0 {
+		t.Fatalf("expected no SetCell calls on clean screen, got %d", dst.setCalls)
+	}
+	// dst still shows "Z" because Draw skipped the clean row.
+	if got := dst.CellAt(0, 1); got == nil || got.Content != "Z" {
+		t.Fatalf("expected dst to retain Z on clean row, got %#v", got)
+	}
+
+	// TouchRow marks row 1 dirty from outside the emulator. This is
+	// the API compositors use to ensure overlay rows get redrawn.
+	e.TouchRow(1)
+
+	dst.setCalls = 0
+	e.Draw(dst, uv.Rect(0, 0, 6, 3))
+
+	// Draw should have written to row 1, restoring "A" from the emulator.
+	if dst.setCalls == 0 {
+		t.Fatalf("expected SetCell calls after TouchRow, got 0")
+	}
+	if got := dst.CellAt(0, 1); got == nil || got.Content != "A" {
+		t.Fatalf("expected dst to show A after TouchRow + Draw, got %#v", got)
+	}
+}
