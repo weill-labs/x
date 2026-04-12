@@ -146,6 +146,13 @@ func (e *Emulator) Touched() []*uv.LineData {
 	return e.scr.Touched()
 }
 
+// TouchRow marks the given row as dirty so that the next Draw includes it.
+// External compositors use this to force redraw of overlay rows (borders,
+// status lines, global bar) that the emulator does not track internally.
+func (e *Emulator) TouchRow(y int) {
+	e.scr.touchLine(0, y, e.scr.Width())
+}
+
 // String returns a string representation of the underlying screen buffer.
 func (e *Emulator) String() string {
 	e.flushExpiredSynchronizedOutput()

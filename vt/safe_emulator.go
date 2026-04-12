@@ -139,6 +139,13 @@ func (se *SafeEmulator) Touched() []*uv.LineData {
 	return se.Emulator.Touched()
 }
 
+// TouchRow marks the given row as dirty in a concurrency-safe manner.
+func (se *SafeEmulator) TouchRow(y int) {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	se.Emulator.TouchRow(y)
+}
+
 // Height returns the height of the emulator in a concurrency-safe manner.
 func (se *SafeEmulator) Height() int {
 	se.mu.RLock()
