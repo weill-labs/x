@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,49 @@ func TestReflowWrappedPositionHandlesEmptyWrappedCounts(t *testing.T) {
 	if pos.X != 0 || pos.Y != 0 {
 		t.Fatalf("reflowWrappedPosition(nil, ...) = (%d, %d), want (0, 0)", pos.X, pos.Y)
 	}
+}
+
+func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
+	t.Parallel()
+
+	const (
+		width       = 214
+		shrinkWidth = 80
+		height      = 12
+	)
+	term := NewEmulator(width, height)
+	lines := make([]string, 0, 5)
+	for i := 1; i <= 5; i++ {
+		line := resizeSmearReproLine(i, width)
+		lines = append(lines, line)
+		if _, err := term.WriteString(line + "\r\n"); err != nil {
+			t.Fatalf("WriteString(line %d) error = %v", i, err)
+		}
+	}
+
+	for i, want := range lines {
+		if got := visibleRowText(term, i, width); got != want {
+			t.Fatalf("before resize row %d = %q, want %q", i, got, want)
+		}
+	}
+
+	term.Resize(shrinkWidth, height)
+	term.Resize(width, height)
+
+	for i := range lines {
+		got := visibleRowText(term, i, width)
+		marker := fmt.Sprintf("LINE_%d_BEGIN_", i+1)
+		if !strings.HasPrefix(got, marker) || strings.Count(got, "LINE_") != 1 {
+			t.Fatalf("after shrink/widen row %d = %q, want separate row beginning %q", i, got, marker)
+		}
+	}
+}
+
+func resizeSmearReproLine(i, width int) string {
+	letter := string(rune('A' + i - 1))
+	prefix := fmt.Sprintf("LINE_%d_BEGIN_", i)
+	suffix := fmt.Sprintf("_END_%d", i)
+	return prefix + strings.Repeat(letter, width-len(prefix)-len(suffix)) + suffix
 }
 
 func TestAltScreenEntryPreservesHiddenCursorWhenHideArrivesFirst(t *testing.T) {
