@@ -50,6 +50,65 @@ func (s *Screen) resizePlain(width, height int) {
 	s.scroll = s.buf.Bounds()
 }
 
+func (s *Screen) resizeNarrow(width, height int, saveTruncated bool) {
+	if s.buf == nil {
+		s.buf = uv.NewRenderBuffer(width, height)
+		s.scroll = s.buf.Bounds()
+		return
+	}
+
+	oldWidth := s.buf.Width()
+	if width < oldWidth {
+		s.snapshotTruncatedRowsForShrink(width, oldWidth, saveTruncated)
+	}
+	s.resizePlain(width, height)
+}
+
+func (s *Screen) snapshotTruncatedRowsForShrink(width, oldWidth int, saveTruncated bool) {
+	if width <= 0 || oldWidth <= width || s.buf == nil {
+		return
+	}
+
+	pushed := 0
+	for y := 0; y < s.buf.Height(); y++ {
+		line := s.buf.Line(y)
+		if !lineHasContentBeyond(line, width, oldWidth) {
+			continue
+		}
+		if saveTruncated && s.scrollback != nil {
+			s.scrollback.Push(line)
+			pushed++
+		}
+		clearShrinkBoundaryCell(line, width)
+	}
+
+	if pushed > 0 && s.cb != nil && s.cb.ScrollbackPush != nil {
+		s.cb.ScrollbackPush(pushed, oldWidth)
+	}
+}
+
+func lineHasContentBeyond(line uv.Line, width, oldWidth int) bool {
+	return reflowLineEnd(line, oldWidth) > width
+}
+
+func clearShrinkBoundaryCell(line uv.Line, width int) {
+	if line == nil || width <= 0 {
+		return
+	}
+
+	start := width - 1
+	for start > 0 {
+		cell := line.At(start)
+		if cell == nil || cell.Width != 0 {
+			break
+		}
+		start--
+	}
+	for col := start; col < width; col++ {
+		line[col] = uv.EmptyCell
+	}
+}
+
 func captureReflowState(s *Screen, width, height int, cursorPhantom bool) ([]reflowLine, reflowPosition, reflowPosition) {
 	logical := make([]reflowLine, 0, height)
 	rowLogical := make([]int, height)
@@ -171,7 +230,7 @@ func reflowLineEnd(line uv.Line, width int, preserveCols ...int) int {
 			continue
 		}
 		cellWidth := max(cell.Width, 1)
-		if cell.Content != "" || (!cell.IsZero() && !cell.Equal(&uv.EmptyCell)) {
+		if reflowCellHasContent(cell) {
 			end = max(end, col+cellWidth)
 		}
 		col += cellWidth
@@ -185,6 +244,10 @@ func reflowLineEnd(line uv.Line, width int, preserveCols ...int) int {
 	return end
 }
 
+func reflowCellHasContent(cell *uv.Cell) bool {
+	return cell != nil && !cell.IsZero() && !cell.Equal(&uv.EmptyCell)
+}
+
 func screenLineUsesFullWidth(line uv.Line, width int) bool {
 	if line == nil || width <= 0 {
 		return false
@@ -193,12 +256,15 @@ func screenLineUsesFullWidth(line uv.Line, width int) bool {
 	if cell == nil {
 		return false
 	}
+	if cell.Equal(&uv.EmptyCell) {
+		return false
+	}
 	if cell.Width == 0 {
 		return true
 	}
 	// Match tmux: any non-empty last column is treated as a soft wrap when
 	// widening, even though right-aligned full-width rows can be false positives.
-	return cell.Content != "" || (!cell.IsZero() && !cell.Equal(&uv.EmptyCell))
+	return cell.Content != "" || !cell.IsZero()
 }
 
 func wrapReflowLine(cells []uv.Cell, width int) []uv.Line {

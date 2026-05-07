@@ -1,9 +1,13 @@
 package vt
 
 import (
+	"fmt"
+	"image/color"
 	"strings"
 	"testing"
 	"time"
+
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 func visibleRowText(term *Emulator, row, width int) string {
@@ -47,6 +51,74 @@ func TestReflowWrappedPositionHandlesEmptyWrappedCounts(t *testing.T) {
 	pos := reflowWrappedPosition(nil, reflowPosition{logical: 3, offset: 12}, 20)
 	if pos.X != 0 || pos.Y != 0 {
 		t.Fatalf("reflowWrappedPosition(nil, ...) = (%d, %d), want (0, 0)", pos.X, pos.Y)
+	}
+}
+
+func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
+	t.Parallel()
+
+	const (
+		width       = 214
+		shrinkWidth = 80
+		height      = 12
+	)
+	term := NewEmulator(width, height)
+	lines := make([]string, 0, 5)
+	for i := 1; i <= 5; i++ {
+		line := resizeSmearReproLine(i, width)
+		lines = append(lines, line)
+		if _, err := term.WriteString(line + "\r\n"); err != nil {
+			t.Fatalf("WriteString(line %d) error = %v", i, err)
+		}
+	}
+
+	for i, want := range lines {
+		if got := visibleRowText(term, i, width); got != want {
+			t.Fatalf("before resize row %d = %q, want %q", i, got, want)
+		}
+	}
+
+	term.Resize(shrinkWidth, height)
+	for i := range lines {
+		if screenLineUsesFullWidth(term.scr.buf.Line(i), shrinkWidth) {
+			t.Fatalf("after shrink row %d still uses full width", i)
+		}
+	}
+	term.Resize(width, height)
+
+	for i := range lines {
+		got := visibleRowText(term, i, width)
+		marker := fmt.Sprintf("LINE_%d_BEGIN_", i+1)
+		if !strings.HasPrefix(got, marker) || strings.Count(got, "LINE_") != 1 {
+			t.Fatalf("after shrink/widen row %d = %q, want separate row beginning %q", i, got, marker)
+		}
+	}
+}
+
+func resizeSmearReproLine(i, width int) string {
+	letter := string(rune('A' + i - 1))
+	prefix := fmt.Sprintf("LINE_%d_BEGIN_", i)
+	suffix := fmt.Sprintf("_END_%d", i)
+	return prefix + strings.Repeat(letter, width-len(prefix)-len(suffix)) + suffix
+}
+
+func TestReflowLineEndTreatsStyledCellsAsContent(t *testing.T) {
+	t.Parallel()
+
+	blank := uv.NewLine(5)
+	if got := reflowLineEnd(blank, 5); got != 0 {
+		t.Fatalf("reflowLineEnd(blank) = %d, want 0", got)
+	}
+
+	styled := uv.NewLine(5)
+	styled[4] = uv.Cell{
+		Width: 1,
+		Style: uv.Style{
+			Bg: color.RGBA{R: 1, A: 255},
+		},
+	}
+	if got := reflowLineEnd(styled, 5); got != 5 {
+		t.Fatalf("reflowLineEnd(styled) = %d, want 5", got)
 	}
 }
 

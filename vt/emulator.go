@@ -349,8 +349,8 @@ func (e *Emulator) Resize(width int, height int) {
 		x = width - 1
 	}
 
-	e.scrs[0].Resize(width, height)
-	e.scrs[1].Resize(width, height)
+	e.scrs[0].resizeNarrow(width, height, true)
+	e.scrs[1].resizeNarrow(width, height, false)
 	e.tabstops = uv.DefaultTabStops(width)
 
 	e.setCursor(x, y)
