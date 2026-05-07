@@ -230,7 +230,7 @@ func reflowLineEnd(line uv.Line, width int, preserveCols ...int) int {
 			continue
 		}
 		cellWidth := max(cell.Width, 1)
-		if cell.Content != "" || (!cell.IsZero() && !cell.Equal(&uv.EmptyCell)) {
+		if reflowCellHasContent(cell) {
 			end = max(end, col+cellWidth)
 		}
 		col += cellWidth
@@ -242,6 +242,11 @@ func reflowLineEnd(line uv.Line, width int, preserveCols ...int) int {
 		end = max(end, min(preserve+1, width))
 	}
 	return end
+}
+
+func reflowCellHasContent(cell *uv.Cell) bool {
+	return cell != nil && !cell.IsZero() && !cell.Equal(&uv.EmptyCell) &&
+		(cell.Content != "" || cell.Width == 0)
 }
 
 func screenLineUsesFullWidth(line uv.Line, width int) bool {
