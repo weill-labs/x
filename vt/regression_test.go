@@ -2,9 +2,12 @@ package vt
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"testing"
 	"time"
+
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 func visibleRowText(term *Emulator, row, width int) string {
@@ -97,6 +100,26 @@ func resizeSmearReproLine(i, width int) string {
 	prefix := fmt.Sprintf("LINE_%d_BEGIN_", i)
 	suffix := fmt.Sprintf("_END_%d", i)
 	return prefix + strings.Repeat(letter, width-len(prefix)-len(suffix)) + suffix
+}
+
+func TestReflowLineEndTreatsStyledCellsAsContent(t *testing.T) {
+	t.Parallel()
+
+	blank := uv.NewLine(5)
+	if got := reflowLineEnd(blank, 5); got != 0 {
+		t.Fatalf("reflowLineEnd(blank) = %d, want 0", got)
+	}
+
+	styled := uv.NewLine(5)
+	styled[4] = uv.Cell{
+		Width: 1,
+		Style: uv.Style{
+			Bg: color.RGBA{R: 1, A: 255},
+		},
+	}
+	if got := reflowLineEnd(styled, 5); got != 5 {
+		t.Fatalf("reflowLineEnd(styled) = %d, want 5", got)
+	}
 }
 
 func TestAltScreenEntryPreservesHiddenCursorWhenHideArrivesFirst(t *testing.T) {

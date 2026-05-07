@@ -245,8 +245,7 @@ func reflowLineEnd(line uv.Line, width int, preserveCols ...int) int {
 }
 
 func reflowCellHasContent(cell *uv.Cell) bool {
-	return cell != nil && !cell.IsZero() && !cell.Equal(&uv.EmptyCell) &&
-		(cell.Content != "" || cell.Width == 0)
+	return cell != nil && !cell.IsZero() && !cell.Equal(&uv.EmptyCell)
 }
 
 func screenLineUsesFullWidth(line uv.Line, width int) bool {
@@ -265,7 +264,7 @@ func screenLineUsesFullWidth(line uv.Line, width int) bool {
 	}
 	// Match tmux: any non-empty last column is treated as a soft wrap when
 	// widening, even though right-aligned full-width rows can be false positives.
-	return cell.Content != "" || (!cell.IsZero() && !cell.Equal(&uv.EmptyCell))
+	return cell.Content != "" || !cell.IsZero()
 }
 
 func wrapReflowLine(cells []uv.Cell, width int) []uv.Line {
