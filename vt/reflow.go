@@ -50,6 +50,65 @@ func (s *Screen) resizePlain(width, height int) {
 	s.scroll = s.buf.Bounds()
 }
 
+func (s *Screen) resizeNarrow(width, height int, saveTruncated bool) {
+	if s.buf == nil {
+		s.buf = uv.NewRenderBuffer(width, height)
+		s.scroll = s.buf.Bounds()
+		return
+	}
+
+	oldWidth := s.buf.Width()
+	if width < oldWidth {
+		s.snapshotTruncatedRowsForShrink(width, oldWidth, saveTruncated)
+	}
+	s.resizePlain(width, height)
+}
+
+func (s *Screen) snapshotTruncatedRowsForShrink(width, oldWidth int, saveTruncated bool) {
+	if width <= 0 || oldWidth <= width || s.buf == nil {
+		return
+	}
+
+	pushed := 0
+	for y := 0; y < s.buf.Height(); y++ {
+		line := s.buf.Line(y)
+		if !lineHasContentBeyond(line, width, oldWidth) {
+			continue
+		}
+		if saveTruncated && s.scrollback != nil {
+			s.scrollback.Push(line)
+			pushed++
+		}
+		clearShrinkBoundaryCell(line, width)
+	}
+
+	if pushed > 0 && s.cb != nil && s.cb.ScrollbackPush != nil {
+		s.cb.ScrollbackPush(pushed, oldWidth)
+	}
+}
+
+func lineHasContentBeyond(line uv.Line, width, oldWidth int) bool {
+	return reflowLineEnd(line, oldWidth) > width
+}
+
+func clearShrinkBoundaryCell(line uv.Line, width int) {
+	if line == nil || width <= 0 {
+		return
+	}
+
+	start := width - 1
+	for start > 0 {
+		cell := line.At(start)
+		if cell == nil || cell.Width != 0 {
+			break
+		}
+		start--
+	}
+	for col := start; col < width; col++ {
+		line[col] = uv.EmptyCell
+	}
+}
+
 func captureReflowState(s *Screen, width, height int, cursorPhantom bool) ([]reflowLine, reflowPosition, reflowPosition) {
 	logical := make([]reflowLine, 0, height)
 	rowLogical := make([]int, height)
@@ -191,6 +250,9 @@ func screenLineUsesFullWidth(line uv.Line, width int) bool {
 	}
 	cell := line.At(width - 1)
 	if cell == nil {
+		return false
+	}
+	if cell.Equal(&uv.EmptyCell) {
 		return false
 	}
 	if cell.Width == 0 {

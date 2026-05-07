@@ -76,6 +76,11 @@ func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
 	}
 
 	term.Resize(shrinkWidth, height)
+	for i := range lines {
+		if screenLineUsesFullWidth(term.scr.buf.Line(i), shrinkWidth) {
+			t.Fatalf("after shrink row %d still uses full width", i)
+		}
+	}
 	term.Resize(width, height)
 
 	for i := range lines {
