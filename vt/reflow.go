@@ -108,6 +108,9 @@ func captureReflowState(s *Screen, width, height int, cursorPhantom bool) ([]ref
 		if y == savedRow {
 			preserveCols = append(preserveCols, s.saved.X)
 		}
+		if y+1 < height && s.lineWrapped(y+1) {
+			preserveCols = append(preserveCols, width-1)
+		}
 
 		line := s.buf.Line(y)
 		cells := captureReflowCells(line, width, preserveCols...)
