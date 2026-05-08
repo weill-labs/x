@@ -15,6 +15,8 @@ type Screen struct {
 	touchedRows []int
 	// touchedSet prevents duplicate row entries in touchedRows.
 	touchedSet []bool
+	// wrapped marks rows that are soft-wrap continuations of the previous row.
+	wrapped []bool
 	// The cur of the screen.
 	cur, saved Cursor
 	// scroll is the scroll region.
@@ -30,6 +32,7 @@ func NewScreen(w, h int) *Screen {
 		scrollback: NewScrollback(DefaultScrollbackSize),
 	}
 	s.scroll = s.buf.Bounds()
+	s.ensureLineWraps(s.buf.Height())
 	s.invalidate()
 	return &s
 }
@@ -42,6 +45,7 @@ func (s *Screen) Reset() {
 	s.cur = Cursor{}
 	s.saved = Cursor{}
 	s.scroll = s.buf.Bounds()
+	s.clearAllLineWraps()
 	s.invalidate()
 }
 
@@ -92,6 +96,7 @@ func (s *Screen) Resize(width int, height int) {
 	} else {
 		s.buf.Resize(width, height)
 	}
+	s.resizeLineWraps(height)
 	s.scroll = s.buf.Bounds()
 	s.invalidate()
 }
@@ -140,6 +145,7 @@ func (s *Screen) isLineEmpty(line uv.Line) bool {
 // ClearArea clears the given area.
 func (s *Screen) ClearArea(area uv.Rectangle) {
 	s.buf.ClearArea(area)
+	s.clearLineWrapsInArea(area)
 	s.recordTouchedArea(area)
 }
 
@@ -151,6 +157,7 @@ func (s *Screen) Fill(c *uv.Cell) {
 // FillArea fills the given area with the given cell.
 func (s *Screen) FillArea(c *uv.Cell, area uv.Rectangle) {
 	s.buf.FillArea(c, area)
+	s.clearLineWrapsInArea(area)
 	s.recordTouchedArea(area)
 }
 
@@ -378,6 +385,7 @@ func (s *Screen) InsertLine(n int) bool {
 	}
 
 	s.buf.InsertLineArea(y, n, s.blankCell(), s.scroll)
+	s.insertLineWraps(y, n, s.scroll)
 	s.recordTouchedArea(s.scroll)
 
 	return true
@@ -417,6 +425,7 @@ func (s *Screen) DeleteLine(n int) bool {
 	}
 
 	s.buf.DeleteLineArea(y, n, s.blankCell(), scroll)
+	s.deleteLineWraps(y, n, scroll)
 	s.recordTouchedArea(scroll)
 
 	return true
@@ -482,6 +491,120 @@ func (s *Screen) recordTouchedRow(y int) {
 func (s *Screen) recordTouchedArea(area uv.Rectangle) {
 	for y := area.Min.Y; y < area.Max.Y; y++ {
 		s.recordTouchedRow(y)
+	}
+}
+
+func (s *Screen) ensureLineWraps(height int) {
+	if height < 0 {
+		height = 0
+	}
+	if cap(s.wrapped) < height {
+		next := make([]bool, height)
+		copy(next, s.wrapped)
+		s.wrapped = next
+		return
+	}
+
+	oldLen := len(s.wrapped)
+	s.wrapped = s.wrapped[:height]
+	for y := oldLen; y < height; y++ {
+		s.wrapped[y] = false
+	}
+}
+
+func (s *Screen) resizeLineWraps(height int) {
+	s.ensureLineWraps(height)
+	if len(s.wrapped) > 0 {
+		s.wrapped[0] = false
+	}
+}
+
+func (s *Screen) clearAllLineWraps() {
+	s.ensureLineWraps(s.buf.Height())
+	for y := range s.wrapped {
+		s.wrapped[y] = false
+	}
+}
+
+func (s *Screen) clearLineWrapsInArea(area uv.Rectangle) {
+	if area.Min.X > 0 {
+		return
+	}
+	s.ensureLineWraps(s.buf.Height())
+	minY := max(area.Min.Y, 0)
+	maxY := min(area.Max.Y, len(s.wrapped))
+	for y := minY; y < maxY; y++ {
+		s.wrapped[y] = false
+	}
+}
+
+func (s *Screen) setLineWrapped(y int, wrapped bool) {
+	if s.buf == nil || y < 0 || y >= s.buf.Height() {
+		return
+	}
+	s.ensureLineWraps(s.buf.Height())
+	s.wrapped[y] = wrapped && y > 0
+}
+
+func (s *Screen) lineWrapped(y int) bool {
+	return y > 0 && y < len(s.wrapped) && s.wrapped[y]
+}
+
+func (s *Screen) replaceLineWraps(wrapped []bool, start, height int) {
+	if height < 0 {
+		height = 0
+	}
+	s.wrapped = make([]bool, height)
+	for y := 0; y < height; y++ {
+		src := start + y
+		if src >= 0 && src < len(wrapped) {
+			s.wrapped[y] = wrapped[src]
+		}
+	}
+	if len(s.wrapped) > 0 {
+		s.wrapped[0] = false
+	}
+}
+
+func (s *Screen) insertLineWraps(y, n int, area uv.Rectangle) {
+	s.ensureLineWraps(s.buf.Height())
+	top := max(y, area.Min.Y)
+	bottom := min(area.Max.Y, len(s.wrapped))
+	if top < 0 || top >= bottom {
+		return
+	}
+	n = min(n, bottom-top)
+	if n <= 0 {
+		return
+	}
+
+	copy(s.wrapped[top+n:bottom], s.wrapped[top:bottom-n])
+	for row := top; row < top+n; row++ {
+		s.wrapped[row] = false
+	}
+	if top+n < bottom {
+		s.wrapped[top+n] = false
+	}
+}
+
+func (s *Screen) deleteLineWraps(y, n int, area uv.Rectangle) {
+	s.ensureLineWraps(s.buf.Height())
+	top := max(y, area.Min.Y)
+	bottom := min(area.Max.Y, len(s.wrapped))
+	if top < 0 || top >= bottom {
+		return
+	}
+	n = min(n, bottom-top)
+	if n <= 0 {
+		return
+	}
+
+	copy(s.wrapped[top:bottom-n], s.wrapped[top+n:bottom])
+	for row := bottom - n; row < bottom; row++ {
+		s.wrapped[row] = false
+	}
+	if top < bottom {
+		s.wrapped[top] = false
 	}
 }
 

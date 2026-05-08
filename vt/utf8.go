@@ -51,6 +51,7 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 	}
 
 	x, y := e.scr.CursorPosition()
+	wrapped := false
 	if e.atPhantom && awm {
 		// moves cursor down similar to [Terminal.linefeed] except it doesn't
 		// respects [ansi.LNM] mode.
@@ -58,6 +59,7 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		e.index()
 		_, y = e.scr.CursorPosition()
 		x = 0
+		wrapped = true
 	}
 
 	// Handle character set mappings
@@ -85,6 +87,9 @@ func (e *Emulator) handleGrapheme(content string, width int) {
 		e.lastChar, _ = utf8.DecodeRuneInString(content)
 	}
 
+	if x == 0 {
+		e.scr.setLineWrapped(y, wrapped)
+	}
 	e.scr.SetCell(x, y, &cell)
 
 	// Handle phantom state at the end of the line
