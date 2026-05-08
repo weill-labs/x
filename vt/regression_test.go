@@ -146,6 +146,26 @@ func TestResizeNarrowKeepsFullWidthHardNewlineRowsSeparate(t *testing.T) {
 	}
 }
 
+func TestLineWrappedReportsOnlySoftWrapContinuations(t *testing.T) {
+	t.Parallel()
+
+	softWrapped := NewEmulator(20, 4)
+	if _, err := softWrapped.WriteString("ABCDEFGHIJKLMNOPQRSTUVWXY"); err != nil {
+		t.Fatalf("WriteString(soft wrapped) error = %v", err)
+	}
+	if !softWrapped.LineWrapped(1) {
+		t.Fatal("LineWrapped(1) = false after autowrap, want true")
+	}
+
+	hardNewline := NewEmulator(20, 4)
+	if _, err := hardNewline.WriteString("ABCDEFGHIJKLMNOPQRST\r\nabcdefghijklmnopqrst"); err != nil {
+		t.Fatalf("WriteString(hard newline) error = %v", err)
+	}
+	if hardNewline.LineWrapped(1) {
+		t.Fatal("LineWrapped(1) = true after CRLF, want false")
+	}
+}
+
 func resizeSmearReproLine(i, width int) string {
 	letter := string(rune('A' + i - 1))
 	prefix := fmt.Sprintf("LINE_%d_BEGIN_", i)
