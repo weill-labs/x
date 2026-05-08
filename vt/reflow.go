@@ -48,6 +48,7 @@ func (s *Screen) resizeWider(width, height int, cursorPhantom bool) {
 func (s *Screen) resizePlain(width, height int) {
 	s.buf.Resize(width, height)
 	s.resizeLineWraps(height)
+	s.clampCursors(width, height)
 	s.buf.Touched = nil
 	s.scroll = s.buf.Bounds()
 }
@@ -308,6 +309,11 @@ func clampReflowCursor(pos uv.Position, width, height int) (int, int) {
 		y = height - 1
 	}
 	return x, y
+}
+
+func (s *Screen) clampCursors(width, height int) {
+	s.cur.X, s.cur.Y = clampReflowCursor(s.cur.Position, width, height)
+	s.saved.X, s.saved.Y = clampReflowCursor(s.saved.Position, width, height)
 }
 
 func clampRow(row, height int) int {
