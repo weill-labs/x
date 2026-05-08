@@ -95,6 +95,62 @@ func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
 	}
 }
 
+func TestResizeNarrowReflowsSoftWrappedLine(t *testing.T) {
+	t.Parallel()
+
+	const (
+		width       = 20
+		shrinkWidth = 12
+		height      = 6
+	)
+	term := NewEmulator(width, height)
+	payload := "ABCDEFGHIJKLMNOPQRSTUVWXY"
+	if _, err := term.WriteString(payload); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+
+	term.Resize(shrinkWidth, height)
+
+	wantRows := []string{
+		"ABCDEFGHIJKL",
+		"MNOPQRSTUVWX",
+		"Y",
+	}
+	for y, want := range wantRows {
+		if got := visibleRowText(term, y, shrinkWidth); got != want {
+			t.Fatalf("after shrink row %d = %q, want %q", y, got, want)
+		}
+	}
+}
+
+func TestResizeNarrowKeepsFullWidthHardNewlineRowsSeparate(t *testing.T) {
+	t.Parallel()
+
+	const (
+		width       = 20
+		shrinkWidth = 12
+		height      = 6
+	)
+	term := NewEmulator(width, height)
+	if _, err := term.WriteString("ABCDEFGHIJKLMNOPQRST\r\nabcdefghijklmnopqrst"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+
+	term.Resize(shrinkWidth, height)
+
+	wantRows := []string{
+		"ABCDEFGHIJKL",
+		"MNOPQRST",
+		"abcdefghijkl",
+		"mnopqrst",
+	}
+	for y, want := range wantRows {
+		if got := visibleRowText(term, y, shrinkWidth); got != want {
+			t.Fatalf("after shrink row %d = %q, want %q", y, got, want)
+		}
+	}
+}
+
 func resizeSmearReproLine(i, width int) string {
 	letter := string(rune('A' + i - 1))
 	prefix := fmt.Sprintf("LINE_%d_BEGIN_", i)
