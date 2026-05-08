@@ -97,6 +97,7 @@ func (s *Screen) Resize(width int, height int) {
 		s.buf.Resize(width, height)
 	}
 	s.resizeLineWraps(height)
+	s.clampCursors(width, height)
 	s.scroll = s.buf.Bounds()
 	s.invalidate()
 }
