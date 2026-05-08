@@ -188,6 +188,21 @@ func TestResizeHeightShrinkClampsCursorBeforeNextWrite(t *testing.T) {
 	}
 }
 
+func TestResizePreservesSpacesBeforeSoftWrapContinuation(t *testing.T) {
+	t.Parallel()
+
+	term := NewEmulator(5, 4)
+	if _, err := term.WriteString("abc  def"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+
+	term.Resize(20, 4)
+
+	if got, want := visibleRowText(term, 0, 20), "abc  def"; got != want {
+		t.Fatalf("row 0 after widen = %q, want %q", got, want)
+	}
+}
+
 func resizeSmearReproLine(i, width int) string {
 	letter := string(rune('A' + i - 1))
 	prefix := fmt.Sprintf("LINE_%d_BEGIN_", i)
