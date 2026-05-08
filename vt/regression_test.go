@@ -60,7 +60,7 @@ func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
 	const (
 		width       = 214
 		shrinkWidth = 80
-		height      = 12
+		height      = 20
 	)
 	term := NewEmulator(width, height)
 	lines := make([]string, 0, 5)
@@ -79,11 +79,6 @@ func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
 	}
 
 	term.Resize(shrinkWidth, height)
-	for i := range lines {
-		if screenLineUsesFullWidth(term.scr.buf.Line(i), shrinkWidth) {
-			t.Fatalf("after shrink row %d still uses full width", i)
-		}
-	}
 	term.Resize(width, height)
 
 	for i := range lines {

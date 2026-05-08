@@ -328,32 +328,12 @@ func (e *Emulator) Resize(width int, height int) {
 		return
 	}
 
-	x, y := e.scr.CursorPosition()
-	if e.atPhantom {
-		if x < width-1 {
-			e.atPhantom = false
-			x++
-		}
+	for i := range e.scrs {
+		// cursorPhantom only applies to the active screen tracked by e.scr.
+		e.scrs[i].resizeNarrow(width, height, i == 0, e.scr == &e.scrs[i] && e.atPhantom)
 	}
-
-	if y < 0 {
-		y = 0
-	}
-	if y >= height {
-		y = height - 1
-	}
-	if x < 0 {
-		x = 0
-	}
-	if x >= width {
-		x = width - 1
-	}
-
-	e.scrs[0].resizeNarrow(width, height, true)
-	e.scrs[1].resizeNarrow(width, height, false)
 	e.tabstops = uv.DefaultTabStops(width)
-
-	e.setCursor(x, y)
+	e.atPhantom = false
 
 	if e.isModeSet(ansi.ModeInBandResize) {
 		_, _ = io.WriteString(e.pw, ansi.InBandResize(e.Height(), e.Width(), 0, 0))
