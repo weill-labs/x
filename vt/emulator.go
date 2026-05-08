@@ -146,6 +146,13 @@ func (e *Emulator) Touched() []*uv.LineData {
 	return e.scr.Touched()
 }
 
+// LineWrapped reports whether row y is a soft-wrap continuation of the
+// previous row.
+func (e *Emulator) LineWrapped(y int) bool {
+	e.flushExpiredSynchronizedOutput()
+	return e.scr.lineWrapped(y)
+}
+
 // TouchRow marks the given row as dirty so that the next Draw includes it.
 // External compositors use this to force redraw of overlay rows (borders,
 // status lines, global bar) that the emulator does not track internally.

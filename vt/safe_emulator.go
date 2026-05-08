@@ -139,6 +139,14 @@ func (se *SafeEmulator) Touched() []*uv.LineData {
 	return se.Emulator.Touched()
 }
 
+// LineWrapped reports whether row y is a soft-wrap continuation in a
+// concurrency-safe manner.
+func (se *SafeEmulator) LineWrapped(y int) bool {
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+	return se.Emulator.LineWrapped(y)
+}
+
 // TouchRow marks the given row as dirty in a concurrency-safe manner.
 func (se *SafeEmulator) TouchRow(y int) {
 	se.mu.Lock()
