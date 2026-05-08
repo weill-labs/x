@@ -166,6 +166,28 @@ func TestLineWrappedReportsOnlySoftWrapContinuations(t *testing.T) {
 	}
 }
 
+func TestResizeHeightShrinkClampsCursorBeforeNextWrite(t *testing.T) {
+	t.Parallel()
+
+	term := NewEmulator(10, 5)
+	if _, err := term.WriteString("\x1b[5;1H"); err != nil {
+		t.Fatalf("WriteString(CUP) error = %v", err)
+	}
+
+	term.Resize(10, 3)
+
+	if pos := term.CursorPosition(); pos.X != 0 || pos.Y != 2 {
+		t.Fatalf("CursorPosition() after height shrink = (%d, %d), want (0, 2)", pos.X, pos.Y)
+	}
+
+	if _, err := term.WriteString("X"); err != nil {
+		t.Fatalf("WriteString(X) error = %v", err)
+	}
+	if got := visibleRowText(term, 2, 10); got != "X" {
+		t.Fatalf("row 2 after write = %q, want X", got)
+	}
+}
+
 func resizeSmearReproLine(i, width int) string {
 	letter := string(rune('A' + i - 1))
 	prefix := fmt.Sprintf("LINE_%d_BEGIN_", i)
