@@ -153,6 +153,13 @@ func (e *Emulator) LineWrapped(y int) bool {
 	return e.scr.lineWrapped(y)
 }
 
+// CursorPhantom reports whether the cursor is in the pending autowrap state
+// after printing in the last column.
+func (e *Emulator) CursorPhantom() bool {
+	e.flushExpiredSynchronizedOutput()
+	return e.atPhantom
+}
+
 // TouchRow marks the given row as dirty so that the next Draw includes it.
 // External compositors use this to force redraw of overlay rows (borders,
 // status lines, global bar) that the emulator does not track internally.

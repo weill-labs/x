@@ -147,6 +147,14 @@ func (se *SafeEmulator) LineWrapped(y int) bool {
 	return se.Emulator.LineWrapped(y)
 }
 
+// CursorPhantom reports whether the cursor is in the pending autowrap state
+// in a concurrency-safe manner.
+func (se *SafeEmulator) CursorPhantom() bool {
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+	return se.Emulator.CursorPhantom()
+}
+
 // TouchRow marks the given row as dirty in a concurrency-safe manner.
 func (se *SafeEmulator) TouchRow(y int) {
 	se.mu.Lock()
