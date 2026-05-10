@@ -17,6 +17,7 @@ type Terminal interface {
 	Close() error
 	Cursor() Cursor
 	CursorColor() color.Color
+	CursorPhantom() bool
 	CursorPosition() uv.Position
 	Draw(scr uv.Screen, area uv.Rectangle)
 	Focus()

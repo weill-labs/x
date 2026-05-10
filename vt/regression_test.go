@@ -166,6 +166,35 @@ func TestLineWrappedReportsOnlySoftWrapContinuations(t *testing.T) {
 	}
 }
 
+func TestCursorPhantomReportsPendingAutowrap(t *testing.T) {
+	t.Parallel()
+
+	term := NewEmulator(5, 3)
+	if _, err := term.WriteString("abcde"); err != nil {
+		t.Fatalf("WriteString(full row) error = %v", err)
+	}
+	if !term.CursorPhantom() {
+		t.Fatal("CursorPhantom() after full row = false, want true")
+	}
+
+	if _, err := term.WriteString("f"); err != nil {
+		t.Fatalf("WriteString(wrapped char) error = %v", err)
+	}
+	if term.CursorPhantom() {
+		t.Fatal("CursorPhantom() after wrapped char = true, want false")
+	}
+	if !term.LineWrapped(1) {
+		t.Fatal("LineWrapped(1) after wrapped char = false, want true")
+	}
+
+	if _, err := term.WriteString("\r"); err != nil {
+		t.Fatalf("WriteString(CR) error = %v", err)
+	}
+	if term.CursorPhantom() {
+		t.Fatal("CursorPhantom() after cursor movement = true, want false")
+	}
+}
+
 func TestResizeHeightShrinkClampsCursorBeforeNextWrite(t *testing.T) {
 	t.Parallel()
 
