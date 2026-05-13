@@ -115,12 +115,24 @@ func (s *Scrollback) CellAt(x, y int) *uv.Cell {
 func trimTrailingEmptyCells(line uv.Line) uv.Line {
 	lastNonEmpty := -1
 	for i := len(line) - 1; i >= 0; i-- {
-		c := &line[i]
-		if !c.IsZero() && !c.Equal(&uv.EmptyCell) {
+		if !isTrailingScrollbackBlank(&line[i]) {
 			lastNonEmpty = i
 			break
 		}
 	}
 
 	return line[:lastNonEmpty+1]
+}
+
+func isTrailingScrollbackBlank(cell *uv.Cell) bool {
+	if cell == nil {
+		return true
+	}
+	if cell.IsZero() || cell.Equal(&uv.EmptyCell) {
+		return true
+	}
+	if cell.Width == 0 {
+		return false
+	}
+	return cell.Content == "" || cell.Content == " "
 }
