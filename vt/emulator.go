@@ -146,6 +146,20 @@ func (e *Emulator) Touched() []*uv.LineData {
 	return e.scr.Touched()
 }
 
+// LineWrapped reports whether row y is a soft-wrap continuation of the
+// previous row.
+func (e *Emulator) LineWrapped(y int) bool {
+	e.flushExpiredSynchronizedOutput()
+	return e.scr.lineWrapped(y)
+}
+
+// CursorPhantom reports whether the cursor is in the pending autowrap state
+// after printing in the last column.
+func (e *Emulator) CursorPhantom() bool {
+	e.flushExpiredSynchronizedOutput()
+	return e.atPhantom
+}
+
 // TouchRow marks the given row as dirty so that the next Draw includes it.
 // External compositors use this to force redraw of overlay rows (borders,
 // status lines, global bar) that the emulator does not track internally.
@@ -328,32 +342,12 @@ func (e *Emulator) Resize(width int, height int) {
 		return
 	}
 
-	x, y := e.scr.CursorPosition()
-	if e.atPhantom {
-		if x < width-1 {
-			e.atPhantom = false
-			x++
-		}
+	for i := range e.scrs {
+		// cursorPhantom only applies to the active screen tracked by e.scr.
+		e.scrs[i].resizeNarrow(width, height, i == 0, e.scr == &e.scrs[i] && e.atPhantom)
 	}
-
-	if y < 0 {
-		y = 0
-	}
-	if y >= height {
-		y = height - 1
-	}
-	if x < 0 {
-		x = 0
-	}
-	if x >= width {
-		x = width - 1
-	}
-
-	e.scrs[0].resizeNarrow(width, height, true)
-	e.scrs[1].resizeNarrow(width, height, false)
 	e.tabstops = uv.DefaultTabStops(width)
-
-	e.setCursor(x, y)
+	e.atPhantom = false
 
 	if e.isModeSet(ansi.ModeInBandResize) {
 		_, _ = io.WriteString(e.pw, ansi.InBandResize(e.Height(), e.Width(), 0, 0))

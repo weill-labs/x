@@ -60,7 +60,7 @@ func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
 	const (
 		width       = 214
 		shrinkWidth = 80
-		height      = 12
+		height      = 20
 	)
 	term := NewEmulator(width, height)
 	lines := make([]string, 0, 5)
@@ -79,11 +79,6 @@ func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
 	}
 
 	term.Resize(shrinkWidth, height)
-	for i := range lines {
-		if screenLineUsesFullWidth(term.scr.buf.Line(i), shrinkWidth) {
-			t.Fatalf("after shrink row %d still uses full width", i)
-		}
-	}
 	term.Resize(width, height)
 
 	for i := range lines {
@@ -92,6 +87,148 @@ func TestResizeShrinkThenWidenKeepsDenseRowsSeparate(t *testing.T) {
 		if !strings.HasPrefix(got, marker) || strings.Count(got, "LINE_") != 1 {
 			t.Fatalf("after shrink/widen row %d = %q, want separate row beginning %q", i, got, marker)
 		}
+	}
+}
+
+func TestResizeNarrowReflowsSoftWrappedLine(t *testing.T) {
+	t.Parallel()
+
+	const (
+		width       = 20
+		shrinkWidth = 12
+		height      = 6
+	)
+	term := NewEmulator(width, height)
+	payload := "ABCDEFGHIJKLMNOPQRSTUVWXY"
+	if _, err := term.WriteString(payload); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+
+	term.Resize(shrinkWidth, height)
+
+	wantRows := []string{
+		"ABCDEFGHIJKL",
+		"MNOPQRSTUVWX",
+		"Y",
+	}
+	for y, want := range wantRows {
+		if got := visibleRowText(term, y, shrinkWidth); got != want {
+			t.Fatalf("after shrink row %d = %q, want %q", y, got, want)
+		}
+	}
+}
+
+func TestResizeNarrowKeepsFullWidthHardNewlineRowsSeparate(t *testing.T) {
+	t.Parallel()
+
+	const (
+		width       = 20
+		shrinkWidth = 12
+		height      = 6
+	)
+	term := NewEmulator(width, height)
+	if _, err := term.WriteString("ABCDEFGHIJKLMNOPQRST\r\nabcdefghijklmnopqrst"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+
+	term.Resize(shrinkWidth, height)
+
+	wantRows := []string{
+		"ABCDEFGHIJKL",
+		"MNOPQRST",
+		"abcdefghijkl",
+		"mnopqrst",
+	}
+	for y, want := range wantRows {
+		if got := visibleRowText(term, y, shrinkWidth); got != want {
+			t.Fatalf("after shrink row %d = %q, want %q", y, got, want)
+		}
+	}
+}
+
+func TestLineWrappedReportsOnlySoftWrapContinuations(t *testing.T) {
+	t.Parallel()
+
+	softWrapped := NewEmulator(20, 4)
+	if _, err := softWrapped.WriteString("ABCDEFGHIJKLMNOPQRSTUVWXY"); err != nil {
+		t.Fatalf("WriteString(soft wrapped) error = %v", err)
+	}
+	if !softWrapped.LineWrapped(1) {
+		t.Fatal("LineWrapped(1) = false after autowrap, want true")
+	}
+
+	hardNewline := NewEmulator(20, 4)
+	if _, err := hardNewline.WriteString("ABCDEFGHIJKLMNOPQRST\r\nabcdefghijklmnopqrst"); err != nil {
+		t.Fatalf("WriteString(hard newline) error = %v", err)
+	}
+	if hardNewline.LineWrapped(1) {
+		t.Fatal("LineWrapped(1) = true after CRLF, want false")
+	}
+}
+
+func TestCursorPhantomReportsPendingAutowrap(t *testing.T) {
+	t.Parallel()
+
+	term := NewEmulator(5, 3)
+	if _, err := term.WriteString("abcde"); err != nil {
+		t.Fatalf("WriteString(full row) error = %v", err)
+	}
+	if !term.CursorPhantom() {
+		t.Fatal("CursorPhantom() after full row = false, want true")
+	}
+
+	if _, err := term.WriteString("f"); err != nil {
+		t.Fatalf("WriteString(wrapped char) error = %v", err)
+	}
+	if term.CursorPhantom() {
+		t.Fatal("CursorPhantom() after wrapped char = true, want false")
+	}
+	if !term.LineWrapped(1) {
+		t.Fatal("LineWrapped(1) after wrapped char = false, want true")
+	}
+
+	if _, err := term.WriteString("\r"); err != nil {
+		t.Fatalf("WriteString(CR) error = %v", err)
+	}
+	if term.CursorPhantom() {
+		t.Fatal("CursorPhantom() after cursor movement = true, want false")
+	}
+}
+
+func TestResizeHeightShrinkClampsCursorBeforeNextWrite(t *testing.T) {
+	t.Parallel()
+
+	term := NewEmulator(10, 5)
+	if _, err := term.WriteString("\x1b[5;1H"); err != nil {
+		t.Fatalf("WriteString(CUP) error = %v", err)
+	}
+
+	term.Resize(10, 3)
+
+	if pos := term.CursorPosition(); pos.X != 0 || pos.Y != 2 {
+		t.Fatalf("CursorPosition() after height shrink = (%d, %d), want (0, 2)", pos.X, pos.Y)
+	}
+
+	if _, err := term.WriteString("X"); err != nil {
+		t.Fatalf("WriteString(X) error = %v", err)
+	}
+	if got := visibleRowText(term, 2, 10); got != "X" {
+		t.Fatalf("row 2 after write = %q, want X", got)
+	}
+}
+
+func TestResizePreservesSpacesBeforeSoftWrapContinuation(t *testing.T) {
+	t.Parallel()
+
+	term := NewEmulator(5, 4)
+	if _, err := term.WriteString("abc  def"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+
+	term.Resize(20, 4)
+
+	if got, want := visibleRowText(term, 0, 20), "abc  def"; got != want {
+		t.Fatalf("row 0 after widen = %q, want %q", got, want)
 	}
 }
 

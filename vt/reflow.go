@@ -30,7 +30,7 @@ func (s *Screen) resizeWider(width, height int, cursorPhantom bool) {
 	}
 
 	logical, cursorPos, savedPos := captureReflowState(s, oldWidth, oldHeight, cursorPhantom)
-	wrapped, cursor, saved := wrapReflowState(logical, width, cursorPos, savedPos)
+	wrapped, lineWraps, cursor, saved := wrapReflowState(logical, width, cursorPos, savedPos)
 
 	next := uv.NewRenderBuffer(width, height)
 	for y := 0; y < len(wrapped) && y < height; y++ {
@@ -38,6 +38,7 @@ func (s *Screen) resizeWider(width, height int, cursorPhantom bool) {
 	}
 
 	s.buf = next
+	s.replaceLineWraps(lineWraps, 0, height)
 	s.scroll = s.buf.Bounds()
 	s.cur.X, s.cur.Y = clampReflowCursor(cursor, width, height)
 	s.saved.X, s.saved.Y = clampReflowCursor(saved, width, height)
@@ -46,67 +47,46 @@ func (s *Screen) resizeWider(width, height int, cursorPhantom bool) {
 
 func (s *Screen) resizePlain(width, height int) {
 	s.buf.Resize(width, height)
+	s.resizeLineWraps(height)
+	s.clampCursors(width, height)
 	s.buf.Touched = nil
 	s.scroll = s.buf.Bounds()
 }
 
-func (s *Screen) resizeNarrow(width, height int, saveTruncated bool) {
+func (s *Screen) resizeNarrow(width, height int, saveTruncated bool, cursorPhantom bool) {
 	if s.buf == nil {
 		s.buf = uv.NewRenderBuffer(width, height)
+		s.ensureLineWraps(height)
 		s.scroll = s.buf.Bounds()
 		return
 	}
 
-	oldWidth := s.buf.Width()
-	if width < oldWidth {
-		s.snapshotTruncatedRowsForShrink(width, oldWidth, saveTruncated)
-	}
-	s.resizePlain(width, height)
-}
-
-func (s *Screen) snapshotTruncatedRowsForShrink(width, oldWidth int, saveTruncated bool) {
-	if width <= 0 || oldWidth <= width || s.buf == nil {
+	oldWidth, oldHeight := s.buf.Width(), s.buf.Height()
+	if width >= oldWidth || oldWidth <= 0 || oldHeight <= 0 {
+		s.resizePlain(width, height)
 		return
 	}
 
-	pushed := 0
-	for y := 0; y < s.buf.Height(); y++ {
-		line := s.buf.Line(y)
-		if !lineHasContentBeyond(line, width, oldWidth) {
-			continue
-		}
-		if saveTruncated && s.scrollback != nil {
-			s.scrollback.Push(line)
-			pushed++
-		}
-		clearShrinkBoundaryCell(line, width)
+	logical, cursorPos, savedPos := captureReflowState(s, oldWidth, oldHeight, cursorPhantom)
+	wrapped, lineWraps, cursor, saved := wrapReflowState(logical, width, cursorPos, savedPos)
+	start := reflowVisibleStart(len(wrapped), height, cursor.Y)
+	if saveTruncated {
+		s.pushReflowScrollback(wrapped[:start], width)
 	}
 
-	if pushed > 0 && s.cb != nil && s.cb.ScrollbackPush != nil {
-		s.cb.ScrollbackPush(pushed, oldWidth)
-	}
-}
-
-func lineHasContentBeyond(line uv.Line, width, oldWidth int) bool {
-	return reflowLineEnd(line, oldWidth) > width
-}
-
-func clearShrinkBoundaryCell(line uv.Line, width int) {
-	if line == nil || width <= 0 {
-		return
+	next := uv.NewRenderBuffer(width, height)
+	for y := 0; y < height && start+y < len(wrapped); y++ {
+		copy(next.Lines[y], wrapped[start+y])
 	}
 
-	start := width - 1
-	for start > 0 {
-		cell := line.At(start)
-		if cell == nil || cell.Width != 0 {
-			break
-		}
-		start--
-	}
-	for col := start; col < width; col++ {
-		line[col] = uv.EmptyCell
-	}
+	s.buf = next
+	s.replaceLineWraps(lineWraps, start, height)
+	s.scroll = s.buf.Bounds()
+	cursor.Y -= start
+	saved.Y -= start
+	s.cur.X, s.cur.Y = clampReflowCursor(cursor, width, height)
+	s.saved.X, s.saved.Y = clampReflowCursor(saved, width, height)
+	s.buf.Touched = nil
 }
 
 func captureReflowState(s *Screen, width, height int, cursorPhantom bool) ([]reflowLine, reflowPosition, reflowPosition) {
@@ -128,11 +108,13 @@ func captureReflowState(s *Screen, width, height int, cursorPhantom bool) ([]ref
 		if y == savedRow {
 			preserveCols = append(preserveCols, s.saved.X)
 		}
+		if y+1 < height && s.lineWrapped(y+1) {
+			preserveCols = append(preserveCols, width-1)
+		}
 
 		line := s.buf.Line(y)
 		cells := captureReflowCells(line, width, preserveCols...)
-		// Treat a full-width row as a soft-wrap continuation when widening.
-		if y == 0 || !screenLineUsesFullWidth(s.buf.Line(y-1), width) {
+		if y == 0 || !s.lineWrapped(y) {
 			logical = append(logical, reflowLine{cells: cells})
 			rowLogical[y] = len(logical) - 1
 			rowBase[y] = 0
@@ -153,22 +135,49 @@ func captureReflowState(s *Screen, width, height int, cursorPhantom bool) ([]ref
 		reflowPosition{logical: rowLogical[savedRow], offset: rowBase[savedRow] + max(s.saved.X, 0)}
 }
 
-func wrapReflowState(logical []reflowLine, width int, cursorPos, savedPos reflowPosition) ([]uv.Line, uv.Position, uv.Position) {
+func wrapReflowState(logical []reflowLine, width int, cursorPos, savedPos reflowPosition) ([]uv.Line, []bool, uv.Position, uv.Position) {
 	if width <= 0 {
 		width = 1
 	}
 
 	wrappedCounts := make([]int, len(logical))
 	rows := make([]uv.Line, 0, len(logical))
+	lineWraps := make([]bool, 0, len(logical))
 	for i, line := range logical {
 		wrappedLine := wrapReflowLine(line.cells, width)
 		wrappedCounts[i] = len(wrappedLine)
-		rows = append(rows, wrappedLine...)
+		for j, row := range wrappedLine {
+			rows = append(rows, row)
+			lineWraps = append(lineWraps, j > 0)
+		}
 	}
 
 	cursor := reflowWrappedPosition(wrappedCounts, cursorPos, width)
 	saved := reflowWrappedPosition(wrappedCounts, savedPos, width)
-	return rows, cursor, saved
+	return rows, lineWraps, cursor, saved
+}
+
+func reflowVisibleStart(rowCount, height, cursorY int) int {
+	if height <= 0 || rowCount <= height {
+		return 0
+	}
+	start := cursorY - height + 1
+	if start < 0 {
+		return 0
+	}
+	return min(start, rowCount-height)
+}
+
+func (s *Screen) pushReflowScrollback(rows []uv.Line, width int) {
+	if len(rows) == 0 || s.scrollback == nil {
+		return
+	}
+	for _, row := range rows {
+		s.scrollback.Push(row)
+	}
+	if s.cb != nil && s.cb.ScrollbackPush != nil {
+		s.cb.ScrollbackPush(len(rows), width)
+	}
 }
 
 func reflowWrappedPosition(wrappedCounts []int, pos reflowPosition, width int) uv.Position {
@@ -248,25 +257,6 @@ func reflowCellHasContent(cell *uv.Cell) bool {
 	return cell != nil && !cell.IsZero() && !cell.Equal(&uv.EmptyCell)
 }
 
-func screenLineUsesFullWidth(line uv.Line, width int) bool {
-	if line == nil || width <= 0 {
-		return false
-	}
-	cell := line.At(width - 1)
-	if cell == nil {
-		return false
-	}
-	if cell.Equal(&uv.EmptyCell) {
-		return false
-	}
-	if cell.Width == 0 {
-		return true
-	}
-	// Match tmux: any non-empty last column is treated as a soft wrap when
-	// widening, even though right-aligned full-width rows can be false positives.
-	return cell.Content != "" || !cell.IsZero()
-}
-
 func wrapReflowLine(cells []uv.Cell, width int) []uv.Line {
 	row := uv.NewLine(width)
 	rows := make([]uv.Line, 0, 1)
@@ -322,6 +312,11 @@ func clampReflowCursor(pos uv.Position, width, height int) (int, int) {
 		y = height - 1
 	}
 	return x, y
+}
+
+func (s *Screen) clampCursors(width, height int) {
+	s.cur.X, s.cur.Y = clampReflowCursor(s.cur.Position, width, height)
+	s.saved.X, s.saved.Y = clampReflowCursor(s.saved.Position, width, height)
 }
 
 func clampRow(row, height int) int {
