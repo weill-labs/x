@@ -1,7 +1,10 @@
 package vt
 
 import (
+	"image/color"
 	"testing"
+
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 func TestScrollback(t *testing.T) {
@@ -65,6 +68,30 @@ func TestScrollback(t *testing.T) {
 
 		if sb.Len() != 5 {
 			t.Errorf("expected len 5 after overflow, got %d", sb.Len())
+		}
+	})
+
+	t.Run("trims trailing styled blanks", func(t *testing.T) {
+		sb := NewScrollback(1)
+		line := make(uv.Line, 12)
+		for i := range line {
+			line[i] = uv.Cell{
+				Content: " ",
+				Style:   uv.Style{Bg: color.RGBA{R: 24, G: 28, B: 36, A: 255}},
+				Width:   1,
+			}
+		}
+		for i, r := range "prompt" {
+			line[i] = uv.Cell{Content: string(r), Width: 1}
+		}
+
+		sb.Push(line)
+
+		if got := len(sb.Line(0)); got != len("prompt") {
+			t.Fatalf("stored line length = %d, want %d", got, len("prompt"))
+		}
+		if got := sb.Line(0).String(); got != "prompt" {
+			t.Fatalf("stored line text = %q, want %q", got, "prompt")
 		}
 	})
 
