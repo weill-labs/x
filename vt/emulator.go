@@ -90,6 +90,10 @@ type Emulator struct {
 
 var _ Terminal = (*Emulator)(nil)
 
+// defaultParserDataSize caps OSC, DCS, SOS, PM, and APC payload data retained
+// by each emulator's ANSI parser.
+const defaultParserDataSize = 128 * 1024
+
 // NewEmulator creates a new virtual terminal emulator.
 func NewEmulator(w, h int) *Emulator {
 	t := new(Emulator)
@@ -100,7 +104,7 @@ func NewEmulator(w, h int) *Emulator {
 	t.scrs[1].cb = &t.cb
 	t.parser = ansi.NewParser()
 	t.parser.SetParamsSize(parser.MaxParamsSize)
-	t.parser.SetDataSize(1024 * 1024 * 4) // 4MB data buffer
+	t.parser.SetDataSize(defaultParserDataSize)
 	t.parser.SetHandler(ansi.Handler{
 		Print:     t.handlePrint,
 		Execute:   t.handleControl,
